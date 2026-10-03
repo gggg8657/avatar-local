@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# avatar-local — 원샷 설치·실행 (macOS / Linux). bash setup.sh | bash setup.sh stop
+# env: PORT(8777) DEVICE(cpu|cuda) TTS_BASE_URL(선택, 예 http://localhost:8771/v1)
+set -euo pipefail
+cd "$(dirname "$0")"
+ST_COMMIT=cd4c0465ae0b54a6f85af57f5c65fec9fe23e7f8
+PORT="${PORT:-8777}"
+ok(){ printf '  ✔ %s\n' "$*"; }; die(){ printf '  ✘ %s\n' "$*" >&2; exit 1; }
+if [ "${1:-}" = stop ]; then [ -f .server.pid ] && kill "$(cat .server.pid)" 2>/dev/null && rm -f .server.pid && ok "서버 종료" || echo "  실행 중 아님"; exit 0; fi
+command -v ffmpeg >/dev/null || die "ffmpeg 필요"
+PY=""; for c in python3.11 python3.10 python3.12 python3; do command -v $c >/dev/null && $c -c 'import sys;sys.exit(0 if (3,10)<=sys.version_info<(3,13) else 1)' 2>/dev/null && { PY=$c; break; }; done
+[ -n "$PY" ] || die "Python 3.10~3.12 필요"; ok "$($PY --version)"
+if [ ! -x venv/bin/python ]; then command -v uv >/dev/null && uv venv --python "$(command -v $PY)" venv -q || $PY -m venv venv; fi
+PIP_ARGS=(); [ -d wheels ] && PIP_ARGS=(--no-index --find-links wheels)
+venv/bin/python -c "import torch, face_alignment, f5_tts" 2>/dev/null || {
+  echo "  · 의존성 설치 (torch·F5-TTS 포함, 수 분)"
+  if command -v uv >/dev/null; then VIRTUAL_ENV=$PWD/venv uv pip install -q "${PIP_ARGS[@]}" torch torchaudio torchvision -r requirements.txt f5-tts
+  else venv/bin/pip install -q "${PIP_ARGS[@]}" torch torchaudio torchvision -r requirements.txt f5-tts; fi
+}; ok "venv 준비"
+mkdir -p shim/gfpgan; [ -f shim/sitecustomize.py ] || printf 'import numpy as _np\n_np.float, _np.int = float, int\n' > shim/sitecustomize.py; [ -f shim/gfpgan/__init__.py ] || printf 'class GFPGANer:  # ponytail: 얼굴 보정(gfpgan)은 안 씀 — basicsr 가 최신 torchvision 과 깨져서 스텁\n    pass\n' > shim/gfpgan/__init__.py
+if [ ! -f vendor/SadTalker/inference.py ]; then
+  command -v git >/dev/null || die "git 필요 (또는 pack.sh 번들)"
+  git clone -q https://github.com/OpenTalker/SadTalker.git vendor/SadTalker && git -C vendor/SadTalker checkout -q $ST_COMMIT 2>/dev/null || true
+fi; venv/bin/python shim/patch_sadtalker.py vendor/SadTalker >/dev/null; ok "SadTalker"
+mkdir -p weights/checkpoints
+for f in mapping_00109-model.pth.tar mapping_00229-model.pth.tar SadTalker_V0.0.2_256.safetensors; do
+  [ -s weights/checkpoints/$f ] || { echo "  · $f 다운로드"; curl -fsSL -o weights/checkpoints/$f https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/$f || die "다운로드 실패 — 폐쇄망이면 pack.sh 번들"; }
+done; ok "가중치 $(du -sh weights | cut -f1) (face_alignment·facexlib 보조 모델은 첫 실행 때 자동 다운로드, 번들에는 포함)"
+venv/bin/python selftest.py >/dev/null && ok "selftest 통과" || die "selftest 실패"
+[ -f .server.pid ] && kill "$(cat .server.pid)" 2>/dev/null || true
+PORT=$PORT nohup python3 app.py > server.log 2>&1 & echo $! > .server.pid
+for _ in $(seq 1 30); do curl -fsS "http://localhost:$PORT/api/status" >/dev/null 2>&1 && break; sleep 1; done
+curl -fsS "http://localhost:$PORT/api/status" >/dev/null || { cat server.log; die "서버 기동 실패"; }
+ok "http://localhost:$PORT  (종료: bash setup.sh stop)"
+case "$(uname -s)" in Darwin*) open "http://localhost:$PORT";; Linux*) command -v xdg-open >/dev/null && xdg-open "http://localhost:$PORT" >/dev/null 2>&1 || true;; esac

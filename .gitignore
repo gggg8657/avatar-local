@@ -1,0 +1,9 @@
+venv/
+vendor/
+weights/
+wheels/
+dist-offline/
+_workspace/
+__pycache__/
+.server.pid
+server.log
