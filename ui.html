@@ -1,0 +1,79 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>avatar local</title>
+<style>
+  :root{--bg:#fafaf8;--fg:#1f1f1f;--muted:#777;--line:#ddd;--acc:#2f6fed}
+  body{font:15px/1.65 -apple-system,"Pretendard","Apple SD Gothic Neo",system-ui,sans-serif;background:var(--bg);color:var(--fg);max-width:1000px;margin:0 auto;padding:20px 16px}
+  h1{font-size:20px;margin:0 0 4px}h1 small{font-weight:400;color:var(--muted);font-size:13px}
+  .box{background:#fff;border:1px solid var(--line);border-radius:8px;padding:14px;margin:12px 0}
+  .box h3{margin:0 0 8px;font-size:14px}
+  .row{display:flex;gap:16px;flex-wrap:wrap}.row>*{flex:1;min-width:280px}
+  textarea{width:100%;height:90px;font:inherit;padding:10px;border:1px solid var(--line);border-radius:6px;box-sizing:border-box}
+  input[type=text]{width:100%;font:inherit;padding:7px 9px;border:1px solid var(--line);border-radius:6px;box-sizing:border-box}
+  button{font:inherit;padding:6px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;cursor:pointer}button.primary{background:var(--acc);color:#fff;border-color:var(--acc);padding:7px 22px}button:disabled{opacity:.5}
+  .consent{background:#fff7e6;border:1px solid #f0c36d;border-radius:8px;padding:10px 14px;font-size:14px}
+  #status,#log{color:var(--muted);font-size:13px}#log{white-space:pre-wrap;max-height:120px;overflow:auto}
+  video{width:100%;max-width:360px;border-radius:8px;background:#000}
+  img.prev{max-width:160px;border-radius:8px}
+  .gal{display:flex;gap:10px;flex-wrap:wrap}.gal div{font-size:12px;color:var(--muted);width:180px}.gal video{max-width:180px}
+</style>
+<h1>avatar local <small>— 내 얼굴·내 목소리 아바타 (토이)</small></h1>
+<div class="consent"><label><input type="checkbox" id="consent"> 올리는 사진과 목소리는 <b>내 것이거나 명시적으로 동의한 사람의 것</b>입니다. 타인 얼굴을 바꿔 끼우는 용도로 쓰지 않습니다.</label></div>
+<div class="row">
+  <div class="box"><h3>1. 사진</h3><input type="file" id="photo" accept=".jpg,.jpeg,.png"><div><img class="prev" id="pprev" hidden></div></div>
+  <div class="box"><h3>2. 목소리 샘플 (10초쯤)</h3>
+    <input type="file" id="voice" accept=".wav,.mp3,.m4a,.webm,.ogg"> 또는 <button id="rec">● 녹음</button> <span id="rect"></span>
+    <audio id="vprev" controls hidden style="width:100%;margin-top:6px"></audio>
+    <input type="text" id="reftext" placeholder="샘플에서 말한 문장 그대로 (복제 정확도 ↑, 영어/중국어 모델 기준)" style="margin-top:6px">
+    <div id="status"></div></div>
+</div>
+<div class="box"><h3>3. 대사</h3><textarea id="text" placeholder="아바타가 말할 내용"></textarea>
+  <div style="margin-top:8px"><button id="go" class="primary">생성</button> <span id="stages"></span></div><div id="log"></div></div>
+<div class="box" id="res" hidden><h3>결과</h3><video id="out" controls></video><div id="meta"></div></div>
+<div class="box"><h3>갤러리</h3><div class="gal" id="gal"></div></div>
+<script>
+const $ = id => document.getElementById(id);
+const b64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = no; r.readAsDataURL(f); });
+fetch('api/status').then(r => r.json()).then(s => { $('status').textContent = `엔진: 립싱크 ${s.sadtalker ? '준비됨' : '없음'} · 목소리 복제 ${s.f5 ? '준비됨' : '없음'}${s.f5_korean ? '(한국어)' : s.f5 ? '(영·중만)' : ''} · TTS 서버 ${s.tts_server ? '연결' : '없음'} · ${s.device}`; });
+$('photo').onchange = () => { const f = $('photo').files[0]; if (f) { $('pprev').src = URL.createObjectURL(f); $('pprev').hidden = false; } };
+let recBlob = null, mr = null;
+$('voice').onchange = () => { recBlob = null; const f = $('voice').files[0]; if (f) { $('vprev').src = URL.createObjectURL(f); $('vprev').hidden = false; } };
+$('rec').onclick = async () => {
+  if (mr && mr.state === 'recording') { mr.stop(); return; }
+  const st = await navigator.mediaDevices.getUserMedia({ audio: true }); const chunks = [];
+  mr = new MediaRecorder(st); mr.ondataavailable = e => chunks.push(e.data);
+  mr.onstop = () => { recBlob = new Blob(chunks, { type: mr.mimeType }); $('vprev').src = URL.createObjectURL(recBlob); $('vprev').hidden = false; $('rec').textContent = '● 녹음'; $('rect').textContent = '녹음됨'; st.getTracks().forEach(t => t.stop()); };
+  mr.start(); $('rec').textContent = '■ 정지'; let n = 0; const iv = setInterval(() => { $('rect').textContent = `${++n}초`; if (n >= 15 || mr.state !== 'recording') { clearInterval(iv); if (mr.state === 'recording') mr.stop(); } }, 1000);
+};
+async function loadGal() {
+  const rs = await fetch('api/runs').then(r => r.json());
+  $('gal').innerHTML = rs.map(r => `<div><video src="api/runs/${r.run_id}/final.mp4" controls></video>${r.ts.slice(0, 16)} · ${r.engine}<br>${r.text.slice(0, 40).replace(/[<>&]/g, '')}</div>`).join('') || '<span style="color:#999">아직 없음</span>';
+}
+loadGal();
+$('go').onclick = async () => {
+  const f = $('photo').files[0]; if (!f) return alert('사진을 올리세요');
+  if (!$('consent').checked) return alert('동의 확인이 필요합니다');
+  $('go').disabled = true; $('res').hidden = true; $('stages').textContent = ''; $('log').textContent = '';
+  const body = { consent: true, text: $('text').value, ref_text: $('reftext').value, photo_name: f.name, photo_b64: await b64(f) };
+  const v = recBlob || $('voice').files[0];
+  if (v) { body.voice_name = recBlob ? 'rec.webm' : v.name; body.voice_b64 = await b64(v); }
+  try {
+    const r = await fetch('api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
+    while (true) {
+      const { value, done } = await reader.read(); if (done) break;
+      buf += dec.decode(value, { stream: true }); let i;
+      while ((i = buf.indexOf('\n\n')) >= 0) {
+        const line = buf.slice(0, i); buf = buf.slice(i + 2); if (!line.startsWith('data: ')) continue;
+        const ev = JSON.parse(line.slice(6));
+        if (ev.stage) $('stages').innerHTML += `<b>${ev.stage}</b> ${ev.msg} · `;
+        if (ev.log) { $('log').textContent += ev.log + '\n'; $('log').scrollTop = 1e9; }
+        if (ev.error) throw new Error(ev.error);
+        if (ev.done) { $('out').src = `api/runs/${ev.done.run_id}/final.mp4`; $('meta').textContent = `${ev.done.run_id} · ${ev.done.engine} · ${ev.done.device}`; $('res').hidden = false; loadGal(); }
+      }
+    }
+  } catch (e) { alert(e.message); }
+  $('go').disabled = false;
+};
+</script>
