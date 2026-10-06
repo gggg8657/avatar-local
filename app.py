@@ -106,7 +106,7 @@ def generate(photo, text, voice=None, ref_text="", consent=False, emit=lambda ev
 
 def list_runs():
     out = []
-    for n in sorted(os.listdir(WS), reverse=True)[:50] if os.path.isdir(WS) else []:
+    for n in sorted(os.listdir(WS), key=lambda n: os.path.getmtime(os.path.join(WS, n)), reverse=True)[:50] if os.path.isdir(WS) else []:
         p = os.path.join(WS, n, "meta.json")
         if os.path.exists(p):
             out.append(json.load(open(p, encoding="utf-8")))
