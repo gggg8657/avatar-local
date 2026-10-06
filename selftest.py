@@ -31,3 +31,7 @@ assert m2["engine"] == "fake-server" and app.list_runs()[0]["run_id"] == m2["run
 assert "src=\"/" not in app.HTML and "fetch('/" not in app.HTML and "'/api/" not in app.HTML, "ui.html 에 절대경로"
 assert set(app.status()) >= {"sadtalker", "f5", "tts_server"}
 shutil.rmtree(d); print("selftest OK")
+# 저작권 표기: 서버가 화면에 붙이는 코드가 있어야 한다 (LICENSE·NOTICE)
+_src = open(__import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "app.py"), encoding="utf-8").read()
+assert "wqkgMjAyNiDquYDrj5nso7wgwrcgZG9uZ2p1a2ltLmRldkBnbWFpbC5jb20=" in _src and "signed(" in _src and "X-Author" in _src, "저작권 표기 누락"
+
