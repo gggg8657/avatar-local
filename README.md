@@ -42,3 +42,15 @@ python3 app.py --cli photo.jpg voice.wav "대사" -o out.mp4 --ref-text "샘플�
 기본 F5-TTS 는 영·중 학습이라 한국어가 알아들을 수 없게 나온다. setup.sh 가 [team-lucid/F5-TTS-ko](https://huggingface.co/team-lucid/F5-TTS-ko)(Apache-2.0, 한글 자모 어휘)를 받아
 `scripts/f5_ko.py` 로 `models/f5-ko/`(model.safetensors + vocab.txt)로 변환하고, app 은 이게 있으면 기본으로 쓰며 글을 자모(NFD)로 풀어 넣는다.
 GPU 에서 한 문장 약 30초, 받아쓰기로 확인한 문장이 목표와 일치. 오디오 읽기(torchcodec)에 FFmpeg 공유 라이브러리가 필요해 없으면 conda 로 `~/.local/ffmpeg-shared` 에 깐다(`FFMPEG_LIB_DIR`).
+
+## 출처·감사 (Credits)
+
+- [SadTalker](https://github.com/OpenTalker/SadTalker) (Apache-2.0) — 립싱크. setup 때 `vendor/` 로 받아 쓰며 수정하지 않음(호환 패치는 `shim/`)
+- [F5-TTS](https://github.com/SWivid/F5-TTS) (코드 MIT, F5TTS_v1_Base 가중치 CC-BY-NC-4.0) — 목소리 복제
+- [team-lucid/F5-TTS-ko](https://huggingface.co/team-lucid/F5-TTS-ko) (Apache-2.0) — 한국어 F5 체크포인트
+- 가상 캐릭터 스튜디오: [diffusers](https://github.com/huggingface/diffusers) (Apache-2.0), [Qwen/Qwen-Image](https://huggingface.co/Qwen/Qwen-Image), [Wan-AI/Wan2.2-TI2V-5B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-TI2V-5B-Diffusers) — 모델 라이선스는 각 모델 카드 참고
+- face_alignment (BSD-3), facexlib (MIT), PyTorch/torchvision (BSD)
+- **LLM 실행** — OpenAI 호환 API 로 호출합니다(모델 가중치는 동봉하지 않음). 기본 배포는 [Ollama](https://github.com/ollama/ollama) (MIT) 위의 Google [Gemma](https://ai.google.dev/gemma) `gemma4:31b` — 모델 이용 조건은 Gemma 배포처 참고.
+- 이 도구는 [agent-page-portal](https://github.com/gggg8657/agent-page-portal) 에 연결해 쓰도록 만들었습니다(단독 실행도 됨).
+
+저작권 표기·전체 목록은 `NOTICE` 를 보세요.
