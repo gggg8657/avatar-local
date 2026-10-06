@@ -11,6 +11,8 @@ env: PORT(8777) DEVICE(cpu|cuda, 기본 cpu — SadTalker 는 mps 미지원) VOI
 import base64, datetime, json, os, re, secrets, shutil, subprocess, sys, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from gpu_pick import env_for, label, pick
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WS = os.environ.get("WORKSPACE") or os.path.join(ROOT, "_workspace")  # 포털이 AGENT_DATA/<도구> 로 모아 줌
 ST = os.path.join(ROOT, "vendor", "SadTalker")
@@ -51,6 +53,9 @@ def tts(text, out_wav, ref_wav=None, ref_text=""):
         if F5_VOCAB:
             cmd += ["--vocab_file", F5_VOCAB]
         env = dict(os.environ)
+        if DEVICE == "cuda":  # GPU 고정 없음 — 실행할 때마다 여유 메모리가 가장 큰 GPU 1장만 보이게
+            g = pick(6000); env = env_for(g, env); print(f"[f5] 목소리 합성 {label(g)} 에서 실행", flush=True)
+            if not g: cmd[cmd.index("--device") + 1] = "cpu"
         if os.path.isdir(FFMPEG_LIB):  # torchaudio(torchcodec)가 오디오를 읽을 FFmpeg 공유 라이브러리 — 정적 ffmpeg 만 있는 서버용
             env["LD_LIBRARY_PATH"] = FFMPEG_LIB + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
         r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, env=env)
@@ -74,6 +79,9 @@ def lipsync(photo, wav, d, emit, full=False):
     cmd = [PY, "inference.py", "--driven_audio", wav, "--source_image", photo, "--result_dir", d, "--checkpoint_dir", os.path.join(ROOT, "weights", "checkpoints"),
            "--still", "--preprocess", "full" if full else "crop", "--size", "256", "--batch_size", "4"] + (["--cpu"] if DEVICE == "cpu" else [])
     env = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "shim"), "PYTHONUNBUFFERED": "1"}
+    if DEVICE == "cuda":  # 실행할 때마다 여유 메모리가 가장 큰 GPU 1장만 보이게 (SadTalker 는 그 안에서 cuda)
+        g = pick(6000); env = env_for(g, env); emit({"log": f"립싱크 {label(g)} 에서 실행"})
+        if not g: cmd.append("--cpu")
     p = subprocess.Popen(cmd, cwd=ST, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     out, log = None, []
     for line in p.stdout:

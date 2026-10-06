@@ -4,7 +4,7 @@ set -euo pipefail; cd "$(dirname "$0")"
 V="${1:-cpu}"; S=dist-offline/avatar-local-linux-x64-$V; rm -rf "$S"; mkdir -p "$S/wheels"
 IDX=(); [ "$V" = cpu ] && IDX=(--extra-index-url https://download.pytorch.org/whl/cpu) || IDX=(--extra-index-url https://download.pytorch.org/whl/$V)
 venv/bin/pip download -q --platform manylinux2014_x86_64 --python-version 3.11 --only-binary=:all: -d "$S/wheels" "${IDX[@]}" torch torchaudio torchvision -r requirements.txt f5-tts
-cp -r app.py ui.html selftest.py setup.sh requirements.txt README.md NOTICE LICENSE shim weights "$S/"
+cp -r app.py gpu_pick.py studio_worker.py ui.html selftest.py setup.sh requirements.txt README.md NOTICE LICENSE shim weights "$S/"
 git clone -q --depth 1 https://github.com/OpenTalker/SadTalker.git "$S/vendor/SadTalker"; rm -rf "$S/vendor/SadTalker/.git"
 # 첫 실행 때 받는 보조 모델: face_alignment(torch hub 캐시), facexlib(site-packages/facexlib/weights), F5-TTS(HF 캐시)
 mkdir -p "$S/cache"; cp -r ~/.cache/torch/hub/checkpoints "$S/cache/torch_hub" 2>/dev/null || true
