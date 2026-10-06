@@ -40,7 +40,7 @@ mkdir -p weights/checkpoints
 for f in mapping_00109-model.pth.tar mapping_00229-model.pth.tar SadTalker_V0.0.2_256.safetensors; do
   [ -s weights/checkpoints/$f ] || { echo "  · $f 다운로드"; curl -fsSL -o weights/checkpoints/$f https://github.com/OpenTalker/SadTalker/releases/download/v0.0.2-rc/$f || die "다운로드 실패 — 폐쇄망이면 pack.sh 번들"; }
 done; ok "가중치 $(du -sh weights | cut -f1) (face_alignment·facexlib 보조 모델은 첫 실행 때 자동 다운로드, 번들에는 포함)"
-venv/bin/python selftest.py >/dev/null && ok "selftest 통과" || die "selftest 실패"
+env -u WORKSPACE venv/bin/python selftest.py >/dev/null && ok "selftest 통과" || die "selftest 실패"
 [ -f .server.pid ] && kill "$(cat .server.pid)" 2>/dev/null || true
 PORT=$PORT nohup python3 app.py > server.log 2>&1 & echo $! > .server.pid
 for _ in $(seq 1 30); do curl -fsS "http://localhost:$PORT/api/status" >/dev/null 2>&1 && break; sleep 1; done
