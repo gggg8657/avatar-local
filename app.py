@@ -19,6 +19,7 @@ PORT = int(os.environ.get("PORT", "8777"))
 DEVICE = os.environ.get("DEVICE", "cpu")
 TTS = os.environ.get("TTS_BASE_URL", "").rstrip("/")
 TTS_VOICE = os.environ.get("TTS_VOICE", "KR")
+TTS_MODEL = os.environ.get("TTS_MODEL", "melo")  # tts-local(MeloTTS) 기준
 F5_MODEL, F5_CKPT = os.environ.get("F5_MODEL", "F5TTS_v1_Base"), os.environ.get("F5_CKPT", "")
 RUN_RE = r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}"
 
@@ -45,10 +46,13 @@ def tts(text, out_wav, ref_wav=None, ref_text=""):
             raise RuntimeError("F5-TTS 실패: " + (r.stderr or r.stdout)[-300:])
         return "f5"
     if TTS:
-        req = urllib.request.Request(TTS + "/audio/speech", json.dumps({"model": "tts", "input": text, "voice": TTS_VOICE, "response_format": "wav"}).encode(),
+        req = urllib.request.Request(TTS + "/audio/speech", json.dumps({"model": TTS_MODEL, "input": text, "voice": TTS_VOICE, "response_format": "wav"}).encode(),
                                      {"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=600) as r, open(out_wav, "wb") as f:
-            f.write(r.read())
+        try:
+            with urllib.request.urlopen(req, timeout=600) as r, open(out_wav, "wb") as f:
+                f.write(r.read())
+        except urllib.error.HTTPError as e:  # 서버가 준 오류 내용을 그대로("HTTP Error 500" 만으로는 원인을 모름)
+            raise RuntimeError(f"TTS 서버 오류 {e.code}: {e.read().decode(errors='replace')[:300]}")
         return "server"
     raise RuntimeError("음성 엔진 없음: 목소리 샘플을 올리거나 TTS_BASE_URL 을 지정하세요")
 
