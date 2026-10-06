@@ -17,6 +17,13 @@
   video{width:100%;max-width:360px;border-radius:8px;background:#000}
   img.prev{max-width:160px;border-radius:8px}
   .gal{display:flex;gap:10px;flex-wrap:wrap}.gal div{font-size:12px;color:var(--muted);width:180px}.gal video{max-width:180px}
+  .gal .item{position:relative;padding:6px;border:2px solid transparent;border-radius:8px}
+  .gal .item .del{position:absolute;top:10px;right:10px;z-index:1;padding:1px 7px;font-size:14px;background:rgba(255,255,255,.92);opacity:0;transition:opacity .15s}
+  .gal .item:hover .del,.gal .item .del:focus-visible{opacity:1}@media (hover:none){.gal .item .del{opacity:1}}
+  .gal.selecting .del{display:none}.gal.selecting .item{cursor:pointer}.gal.selecting video,.gal.selecting img{pointer-events:none}
+  .gal.selecting .item::before{content:"";position:absolute;top:10px;left:10px;z-index:1;width:20px;height:20px;box-sizing:border-box;border:2px solid #fff;border-radius:50%;background:rgba(0,0,0,.35);box-shadow:0 0 0 1px rgba(0,0,0,.3);color:#fff;font-size:12px;line-height:16px;text-align:center}
+  .gal .item.selected{border-color:var(--acc);background:#f0f5ff}.gal.selecting .item.selected::before{content:"✓";background:var(--acc)}
+  .gal-tools{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}.gal-tools h3{margin:0;flex:1}
   .tabs{display:flex;gap:6px;margin:14px 0 4px}.tabs button{border-radius:20px;padding:6px 16px}.tabs button.on{background:var(--fg);color:#fff;border-color:var(--fg)}
   select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:#fff}
   .cands{display:flex;gap:10px;flex-wrap:wrap}.cands img{width:200px;max-width:calc(50% - 5px);box-sizing:border-box;border-radius:8px;border:3px solid transparent;cursor:pointer;background:#eee}.cands img.on{border-color:var(--acc)}
@@ -67,7 +74,8 @@
   <div style="margin-top:8px"><button id="go" class="primary">생성</button> <span id="stages"></span></div><div id="log"></div></div>
 <div class="box" id="res" hidden><h3>결과</h3><video id="out" controls></video><div id="meta"></div></div>
 </div>
-<div class="box"><h3>갤러리</h3><div class="gal" id="gal"></div></div>
+<div class="box"><div class="gal-tools"><h3>갤러리</h3><button id="galMode">선택</button><button id="galAll" hidden>전체 선택</button><button id="galNone" hidden>선택 해제</button><button id="galDelete" hidden disabled>선택 삭제 (0)</button></div>
+  <div id="galMsg" class="note" role="status"></div><div class="gal" id="gal"></div></div>
 <script>
 const $ = id => document.getElementById(id);
 const b64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = no; r.readAsDataURL(f); });
@@ -82,12 +90,62 @@ $('rec').onclick = async () => {
   mr.onstop = () => { recBlob = new Blob(chunks, { type: mr.mimeType }); $('vprev').src = URL.createObjectURL(recBlob); $('vprev').hidden = false; $('rec').textContent = '● 녹음'; $('rect').textContent = '녹음됨'; st.getTracks().forEach(t => t.stop()); };
   mr.start(); $('rec').textContent = '■ 정지'; let n = 0; const iv = setInterval(() => { $('rect').textContent = `${++n}초`; if (n >= 15 || mr.state !== 'recording') { clearInterval(iv); if (mr.state === 'recording') mr.stop(); } }, 1000);
 };
+// ── 갤러리 지우기: [선택] → 항목 클릭으로 고르기 → 선택 삭제, 또는 항목의 🗑. 서버는 .trash/<시각>/ 로 옮긴다 ──
+const SEL = new Set(); let selMode = false, deleting = false, lastBatch = null;
+function galSync() {
+  const items = [...$('gal').querySelectorAll('.item')], ids = new Set(items.map(i => i.dataset.id));
+  SEL.forEach(id => { if (!ids.has(id)) SEL.delete(id); });
+  if (!items.length) selMode = false;
+  items.forEach(i => i.classList.toggle('selected', SEL.has(i.dataset.id)));
+  $('gal').classList.toggle('selecting', selMode);
+  $('galMode').textContent = selMode ? '완료' : '선택'; $('galMode').disabled = deleting || !items.length;
+  ['galAll', 'galNone', 'galDelete'].forEach(k => $(k).hidden = !selMode);
+  $('galAll').disabled = deleting || SEL.size === items.length; $('galNone').disabled = deleting || !SEL.size;
+  $('galDelete').disabled = deleting || !SEL.size; $('galDelete').textContent = deleting ? '지우는 중…' : `선택 삭제 (${SEL.size})`;
+}
+$('galMode').onclick = () => { selMode = !selMode; SEL.clear(); galSync(); };
+$('galAll').onclick = () => { $('gal').querySelectorAll('.item').forEach(i => SEL.add(i.dataset.id)); galSync(); };
+$('galNone').onclick = () => { SEL.clear(); galSync(); };
+$('galDelete').onclick = () => delRuns([...SEL]);
+$('gal').onclick = e => {
+  const it = e.target.closest('.item'); if (!it || deleting) return;
+  if (e.target.closest('.del')) return delRuns([it.dataset.id]);
+  if (!selMode) return;
+  SEL.has(it.dataset.id) ? SEL.delete(it.dataset.id) : SEL.add(it.dataset.id); galSync();
+};
+function forget(id) {  // 지운 항목을 보고 있던 화면(결과 영상·스튜디오 후보)도 비운다
+  for (const v of [$('out'), $('sout')]) if ((v.getAttribute('src') || '').startsWith(`api/runs/${id}/`)) { v.pause(); v.removeAttribute('src'); v.load(); v.closest('.box').hidden = true; }
+  if (CH && CH.run_id === id) { CH = null; $('candBox').hidden = true; $('acts').hidden = true; $('sstages').textContent = ''; }
+}
+async function delRuns(ids) {
+  if (!ids.length || !confirm(ids.length > 1 ? `선택한 ${ids.length}개 항목을 지울까요?\n영상·음성·그림 등 관련 파일이 함께 휴지통(.trash)으로 옮겨집니다.` : '이 항목을 지울까요?\n영상·음성·그림 등 관련 파일이 함께 휴지통(.trash)으로 옮겨집니다.')) return;
+  deleting = true; galSync(); $('galMsg').textContent = '';
+  try {
+    const r = await fetch('api/runs/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_ids: ids }) });
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || '지우지 못했습니다');
+    j.deleted.forEach(id => { forget(id); SEL.delete(id); }); lastBatch = j.batch;
+    $('galMsg').innerHTML = `${j.deleted.length}개를 휴지통으로 옮겼습니다` + (j.batch ? ' · <a href="#" id="galUndo">되살리기</a>' : '') + (j.missing.length ? ` · ${j.missing.length}개는 이미 없음` : '');
+  } catch (e) { $('galMsg').textContent = '오류: ' + e.message; }
+  deleting = false;
+  try { await loadGal(); } catch (e) { galSync(); }
+}
+$('galMsg').onclick = async e => {
+  if (e.target.id !== 'galUndo' || !lastBatch) return; e.preventDefault();
+  try {
+    const j = await fetch('api/runs/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch: lastBatch }) }).then(r => r.json());
+    if (j.error) throw new Error(j.error); lastBatch = null; $('galMsg').textContent = `${j.restored.length}개를 되살렸습니다`;
+  } catch (er) { $('galMsg').textContent = '되살리기 실패: ' + er.message; }
+  loadGal();
+};
 async function loadGal() {
   const rs = await fetch('api/runs').then(r => r.json());
   const e = s => String(s || '').slice(0, 40).replace(/[<>&"]/g, '');
-  $('gal').innerHTML = rs.map(r => r.kind === 'character'
+  $('gal').innerHTML = rs.map(r => { const content = r.kind === 'character'
     ? `<div>${r.move ? `<video src="api/runs/${r.run_id}/move.mp4" controls></video>` : r.talk ? `<video src="api/runs/${r.run_id}/talk.mp4" controls></video>` : `<img src="api/runs/${r.run_id}/cand_${r.picked || 0}.png" style="width:180px;border-radius:8px">`}${r.ts.slice(0, 16)} · ✨<br>${e(r.desc)}</div>`
-    : `<div><video src="api/runs/${r.run_id}/final.mp4" controls></video>${r.ts.slice(0, 16)} · ${r.engine}<br>${e(r.text)}</div>`).join('') || '<span style="color:#999">아직 없음</span>';
+    : `<div><video src="api/runs/${r.run_id}/final.mp4" controls></video>${r.ts.slice(0, 16)} · ${r.engine}<br>${e(r.text)}</div>`;
+    return `<div class="item" data-id="${e(r.run_id)}"><button class="del" title="지우기 (휴지통으로)" aria-label="지우기">🗑</button>${content}</div>`;
+  }).join('') || '<span style="color:#999">아직 없음</span>';
+  galSync();
 }
 loadGal();
 $('go').onclick = async () => {

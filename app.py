@@ -297,6 +297,41 @@ def list_runs():
     return out
 
 
+TRASH = os.path.join(WS, ".trash")  # 지운 항목은 .trash/<시각>/<run_id> 로 옮겨 둔다 (되살리기 가능)
+
+
+def run_path(run_id):
+    """run_id → WS 바로 아래 실제 폴더. 형식이 틀리거나 WS 밖(링크·../)이면 ValueError"""
+    if not isinstance(run_id, str) or not re.fullmatch(RUN_RE, run_id): raise ValueError("잘못된 항목입니다")
+    d = os.path.join(WS, run_id)
+    if os.path.islink(d) or os.path.dirname(os.path.realpath(d)) != os.path.realpath(WS): raise ValueError("잘못된 항목입니다")
+    return d
+
+
+def trash_runs(ids):
+    """갤러리 항목(폴더 통째로: 영상·음성·후보 그림·meta)을 휴지통으로. 한 번 지운 것들은 한 묶음(batch)"""
+    if not isinstance(ids, list) or not ids or len(ids) > 200: raise ValueError("지울 항목을 고르세요")
+    paths = [run_path(i) for i in ids]  # 하나라도 틀리면 아무것도 옮기지 않는다
+    batch = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
+    dst = os.path.join(TRASH, batch); deleted, missing = [], []
+    for i, d in zip(ids, paths):
+        if not os.path.isdir(d): missing.append(i); continue
+        os.makedirs(dst, exist_ok=True); shutil.move(d, os.path.join(dst, i)); deleted.append(i)
+    return {"deleted": deleted, "missing": missing, "batch": batch if deleted else None}
+
+
+def restore_trash(batch):
+    if not isinstance(batch, str) or not re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{4}", batch): raise ValueError("잘못된 묶음입니다")
+    src = os.path.join(TRASH, batch)
+    if not os.path.isdir(src): raise ValueError("휴지통에 없습니다")
+    restored = []
+    for i in sorted(os.listdir(src)):
+        if re.fullmatch(RUN_RE, i) and not os.path.exists(os.path.join(WS, i)):
+            shutil.move(os.path.join(src, i), os.path.join(WS, i)); restored.append(i)
+    if not os.listdir(src): os.rmdir(src)
+    return {"restored": restored}
+
+
 def status():
     return {"sadtalker": os.path.exists(os.path.join(ROOT, "weights", "checkpoints", "SadTalker_V0.0.2_256.safetensors")) and os.path.exists(os.path.join(ST, "inference.py")),
             "f5": os.path.exists(os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli")), "tts_server": bool(TTS), "device": DEVICE,
@@ -344,6 +379,7 @@ class H(BaseHTTPRequestHandler):
             f = os.path.join(WS, m.group(1), m.group(2))
             if os.path.exists(f):
                 return self._send(open(f, "rb").read(), "image/png" if f.endswith(".png") else "video/mp4")
+            return self._send({"error": "삭제됐거나 없는 파일입니다"}, code=404)
         self._send(signed(HTML).encode(), "text/html; charset=utf-8")
 
     def studio(self, req):
@@ -374,8 +410,28 @@ class H(BaseHTTPRequestHandler):
         finally:
             if voice and os.path.exists(voice): os.remove(voice)
 
+    def do_DELETE(self):
+        m = re.fullmatch(rf"/api/runs/({RUN_RE})", self.path)
+        if not m:
+            return self._send({"error": "not found"}, code=404)
+        return self.delete_runs([m.group(1)])
+
+    def delete_runs(self, ids):
+        try:
+            r = trash_runs(ids)
+        except ValueError as e:
+            return self._send({"error": str(e)}, code=400)
+        return self._send(r, code=200 if r["deleted"] else 404)
+
     def do_POST(self):
         req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if self.path == "/api/runs/delete":  # {run_ids:[…]} (또는 run_id 하나) → 휴지통으로
+            return self.delete_runs(req.get("run_ids") or [req.get("run_id")])
+        if self.path == "/api/runs/restore":  # {batch} → 그 삭제 묶음을 되살린다
+            try:
+                return self._send(restore_trash(req.get("batch")))
+            except ValueError as e:
+                return self._send({"error": str(e)}, code=400)
         if self.path in ("/api/imagine", "/api/speak", "/api/move", "/api/to_persona"):  # 가상 캐릭터 스튜디오
             return self.studio(req)
         if self.path != "/api/run":
