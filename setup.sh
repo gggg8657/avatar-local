@@ -6,7 +6,8 @@ cd "$(dirname "$0")"
 ST_COMMIT=cd4c0465ae0b54a6f85af57f5c65fec9fe23e7f8
 PORT="${PORT:-8777}"
 ok(){ printf '  ✔ %s\n' "$*"; }; die(){ printf '  ✘ %s\n' "$*" >&2; exit 1; }
-if [ "${1:-}" = stop ]; then [ -f .server.pid ] && kill "$(cat .server.pid)" 2>/dev/null && rm -f .server.pid && ok "서버 종료" || echo "  실행 중 아님"; exit 0; fi
+if [ "${1:-}" = stop ]; then [ -f .studio.pid ] && kill "$(cat .studio.pid)" 2>/dev/null; rm -f .studio.pid  # 가상 캐릭터 그림·영상 작업 프로세스
+  [ -f .server.pid ] && kill "$(cat .server.pid)" 2>/dev/null && rm -f .server.pid && ok "서버 종료" || echo "  실행 중 아님"; exit 0; fi
 command -v ffmpeg >/dev/null || die "ffmpeg 필요"
 PY=""; for c in python3.11 python3.10 python3.12 python3; do command -v $c >/dev/null && $c -c 'import sys;sys.exit(0 if (3,10)<=sys.version_info<(3,13) else 1)' 2>/dev/null && { PY=$c; break; }; done
 [ -n "$PY" ] || die "Python 3.10~3.12 필요"; ok "$($PY --version)"
