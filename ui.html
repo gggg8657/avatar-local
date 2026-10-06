@@ -17,8 +17,42 @@
   video{width:100%;max-width:360px;border-radius:8px;background:#000}
   img.prev{max-width:160px;border-radius:8px}
   .gal{display:flex;gap:10px;flex-wrap:wrap}.gal div{font-size:12px;color:var(--muted);width:180px}.gal video{max-width:180px}
+  .tabs{display:flex;gap:6px;margin:14px 0 4px}.tabs button{border-radius:20px;padding:6px 16px}.tabs button.on{background:var(--fg);color:#fff;border-color:var(--fg)}
+  select{font:inherit;padding:6px 8px;border:1px solid var(--line);border-radius:6px;background:#fff}
+  .cands{display:flex;gap:10px;flex-wrap:wrap}.cands img{width:200px;border-radius:8px;border:3px solid transparent;cursor:pointer;background:#eee}.cands img.on{border-color:var(--acc)}
+  .acts{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+  .note{font-size:12px;color:var(--muted)}
 </style>
-<h1>avatar local <small>— 내 얼굴·내 목소리 아바타 (토이)</small></h1>
+<h1>avatar local <small>— 내 얼굴·내 목소리 아바타 · 가상 캐릭터 스튜디오 (토이)</small></h1>
+<div class="tabs"><button data-tab="studio" class="on">✨ 가상 캐릭터 만들기</button><button data-tab="mine">🙂 내 얼굴 아바타</button></div>
+
+<div id="tab-studio">
+<div class="box"><h3>1. 어떤 캐릭터인지 묘사</h3>
+  <textarea id="desc" placeholder="예) 20대 후반 여성 개발자, 짧은 단발머리, 둥근 안경, 회색 후드티, 장난기 있는 밝은 표정"></textarea>
+  <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+    스타일 <select id="style"></select> 구도 <select id="shot"></select> 장수 <select id="n"><option>2</option><option selected>4</option><option>6</option></select>
+    <button id="draw" class="primary">그리기</button> <span id="sstages" class="note"></span></div>
+  <div class="note" style="margin-top:6px">실존 인물이 아닌 가상의 인물만 그립니다. 유명인·특정인을 닮게 묘사하지 마세요.</div></div>
+<div class="box" id="candBox" hidden><h3>2. 마음에 드는 그림 고르기</h3><div class="cands" id="cands"></div></div>
+<div class="acts" id="acts" hidden>
+  <div class="box"><h3>🗣 말하게 하기 (립싱크)</h3><textarea id="stext" placeholder="캐릭터가 말할 대사"></textarea>
+    <div class="note">목소리: 기본 TTS · 샘플을 넣으면 그 목소리로 <input type="file" id="svoice" accept=".wav,.mp3,.m4a,.webm,.ogg"></div>
+    <input type="text" id="sref" placeholder="샘플에서 말한 문장 (샘플 넣을 때)" style="margin-top:6px">
+    <div style="margin-top:8px"><button id="speakGo" class="primary">말하게 하기</button></div>
+    <div class="note">상반신·전신 그림은 몸은 그대로, 얼굴만 움직입니다. 그림체(애니·웹툰)는 얼굴 인식이 안 될 수 있어요.</div></div>
+  <div class="box"><h3>🏃 움직이게 하기 (동작 영상)</h3><textarea id="action" placeholder="예) 카메라를 보며 손을 흔들고 환하게 웃는다"></textarea>
+    <input type="text" id="mtext" placeholder="(선택) 영상에 입힐 대사 — 입모양은 맞지 않음">
+    <div style="margin-top:8px"><label class="note"><input type="checkbox" id="fast" checked> 빠르게(약 3초)</label> <button id="moveGo" class="primary">움직이게 하기</button></div>
+    <div class="note">그림 한 장으로 몸 전체가 움직이는 영상을 만듭니다(GPU 수 분).</div></div>
+  <div class="box"><h3>💬 Persona 캐릭터로</h3><input type="text" id="pname" placeholder="이름 (예: 지우)">
+    <textarea id="ppers" placeholder="성격·말투·관계 (예: 내 회사 동기, 털털하고 반말, 개발 얘기를 좋아함)" style="margin-top:6px;height:70px"></textarea>
+    <div style="margin-top:8px"><button id="toPersona" class="primary">persona 에 추가</button> <span id="pmsg" class="note"></span></div>
+    <div class="note">추가하면 Persona 에서 이 얼굴로 대화·음성·고화질 클립을 씁니다.</div></div>
+</div>
+<div class="box" id="sres" hidden><h3>결과</h3><video id="sout" controls></video><div id="slog" class="note" style="white-space:pre-wrap;max-height:100px;overflow:auto"></div></div>
+</div>
+
+<div id="tab-mine" hidden>
 <div class="consent"><label><input type="checkbox" id="consent"> 올리는 사진과 목소리는 <b>내 것이거나 명시적으로 동의한 사람의 것</b>입니다. 타인 얼굴을 바꿔 끼우는 용도로 쓰지 않습니다.</label></div>
 <div class="row">
   <div class="box"><h3>1. 사진</h3><input type="file" id="photo" accept=".jpg,.jpeg,.png"><div><img class="prev" id="pprev" hidden></div></div>
@@ -31,6 +65,7 @@
 <div class="box"><h3>3. 대사</h3><textarea id="text" placeholder="아바타가 말할 내용"></textarea>
   <div style="margin-top:8px"><button id="go" class="primary">생성</button> <span id="stages"></span></div><div id="log"></div></div>
 <div class="box" id="res" hidden><h3>결과</h3><video id="out" controls></video><div id="meta"></div></div>
+</div>
 <div class="box"><h3>갤러리</h3><div class="gal" id="gal"></div></div>
 <script>
 const $ = id => document.getElementById(id);
@@ -48,7 +83,10 @@ $('rec').onclick = async () => {
 };
 async function loadGal() {
   const rs = await fetch('api/runs').then(r => r.json());
-  $('gal').innerHTML = rs.map(r => `<div><video src="api/runs/${r.run_id}/final.mp4" controls></video>${r.ts.slice(0, 16)} · ${r.engine}<br>${r.text.slice(0, 40).replace(/[<>&]/g, '')}</div>`).join('') || '<span style="color:#999">아직 없음</span>';
+  const e = s => String(s || '').slice(0, 40).replace(/[<>&"]/g, '');
+  $('gal').innerHTML = rs.map(r => r.kind === 'character'
+    ? `<div>${r.move ? `<video src="api/runs/${r.run_id}/move.mp4" controls></video>` : r.talk ? `<video src="api/runs/${r.run_id}/talk.mp4" controls></video>` : `<img src="api/runs/${r.run_id}/cand_${r.picked || 0}.png" style="width:180px;border-radius:8px">`}${r.ts.slice(0, 16)} · ✨<br>${e(r.desc)}</div>`
+    : `<div><video src="api/runs/${r.run_id}/final.mp4" controls></video>${r.ts.slice(0, 16)} · ${r.engine}<br>${e(r.text)}</div>`).join('') || '<span style="color:#999">아직 없음</span>';
 }
 loadGal();
 $('go').onclick = async () => {
@@ -75,5 +113,67 @@ $('go').onclick = async () => {
     }
   } catch (e) { alert(e.message); }
   $('go').disabled = false;
+};
+
+// ── 가상 캐릭터 스튜디오 ──
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  $('tab-studio').hidden = b.dataset.tab !== 'studio'; $('tab-mine').hidden = b.dataset.tab !== 'mine';
+});
+fetch('api/studio').then(r => r.json()).then(s => {
+  $('style').innerHTML = Object.entries(s.styles).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+  $('shot').innerHTML = Object.entries(s.shots).map(([k, v]) => `<option value="${k}" ${k === 'half' ? 'selected' : ''}>${v}</option>`).join('');
+});
+let CH = null, PICK = 0;
+async function sse(path, body, on) {
+  const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '', done = null;
+  while (true) {
+    const { value, done: end } = await reader.read(); if (end) break;
+    buf += dec.decode(value, { stream: true }); let i;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const line = buf.slice(0, i); buf = buf.slice(i + 2); if (!line.startsWith('data: ')) continue;
+      const ev = JSON.parse(line.slice(6)); if (ev.error) throw new Error(ev.error); if (ev.done) done = ev.done; else on(ev);
+    }
+  }
+  return done;
+}
+const prog = ev => { if (ev.stage) $('sstages').textContent = ev.msg; if (ev.step) $('sstages').textContent = `영상 ${ev.step}/${ev.total} 단계`; if (ev.log) { $('slog').textContent += ev.log + '\n'; $('slog').scrollTop = 1e9; } };
+function pick(i) { PICK = i; document.querySelectorAll('#cands img').forEach((im, k) => im.classList.toggle('on', k === i)); $('acts').hidden = false; }
+$('draw').onclick = async () => {
+  if (!$('desc').value.trim()) return alert('어떤 캐릭터인지 묘사해 주세요');
+  $('draw').disabled = true; $('candBox').hidden = false; $('acts').hidden = true; const n = +$('n').value;
+  $('cands').innerHTML = Array.from({ length: n }, () => '<img alt="그리는 중…" style="height:200px">').join('');
+  try {
+    CH = await sse('api/imagine', { desc: $('desc').value, style: $('style').value, shot: $('shot').value, n }, ev => {
+      prog(ev); if (ev.image !== undefined) { const im = $('cands').children[ev.image]; im.src = `api/runs/${ev.run_id}/cand_${ev.image}.png?${Date.now()}`; im.style.height = ''; }
+    });
+    $('cands').querySelectorAll('img').forEach((im, i) => im.onclick = () => pick(i)); pick(0); $('sstages').textContent = '그림을 고르세요'; loadGal();
+  } catch (e) { $('sstages').textContent = '오류: ' + e.message; }
+  $('draw').disabled = false;
+};
+async function act(btn, path, body, vid) {
+  if (!CH) return; btn.disabled = true; $('slog').textContent = '';
+  try {
+    const r = await sse(path, { run_id: CH.run_id, idx: PICK, ...body }, prog);
+    $('sout').src = `api/runs/${r.run_id}/${r.video}?${Date.now()}`; $('sres').hidden = false; $('sstages').textContent = '완료'; loadGal();
+  } catch (e) { $('sstages').textContent = '오류: ' + e.message; }
+  btn.disabled = false;
+}
+$('speakGo').onclick = async () => {
+  if (!$('stext').value.trim()) return alert('대사를 써 주세요');
+  const v = $('svoice').files[0], body = { text: $('stext').value, ref_text: $('sref').value };
+  if (v) { body.voice_name = v.name; body.voice_b64 = await b64(v); }
+  act($('speakGo'), 'api/speak', body);
+};
+$('moveGo').onclick = () => { if (!$('action').value.trim()) return alert('어떻게 움직일지 써 주세요'); act($('moveGo'), 'api/move', { action: $('action').value, text: $('mtext').value, fast: $('fast').checked }); };
+$('toPersona').onclick = async () => {
+  if (!CH) return; $('toPersona').disabled = true; $('pmsg').textContent = '추가 중 (캐릭터 설정을 쓰는 중)…';
+  try {
+    const j = await fetch('api/to_persona', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ run_id: CH.run_id, idx: PICK, name: $('pname').value, personality: $('ppers').value }) }).then(r => r.json());
+    if (j.error) throw new Error(j.error);
+    $('pmsg').innerHTML = `추가됨: <b>${j.title}</b> — <a href="../persona-local/?pick=${j.name}" target="_blank">Persona 에서 열기</a>`;
+  } catch (e) { $('pmsg').textContent = '오류: ' + e.message; }
+  $('toPersona').disabled = false;
 };
 </script>
