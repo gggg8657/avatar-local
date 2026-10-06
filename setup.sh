@@ -31,6 +31,15 @@ venv/bin/python -c "import torch, face_alignment, f5_tts" 2>/dev/null || {
   if command -v uv >/dev/null; then VIRTUAL_ENV=$PWD/venv uv pip install -q "${PIP_ARGS[@]}" torch torchaudio torchvision -r requirements.txt f5-tts
   else venv/bin/pip install -q "${PIP_ARGS[@]}" torch torchaudio torchvision -r requirements.txt f5-tts; fi
 }; torch_gpu_fix venv/bin/python torch torchaudio torchvision; ok "venv 준비"
+# 한국어 목소리 복제: team-lucid/F5-TTS-ko (기본 F5 는 영·중 학습이라 한국어가 알아들을 수 없게 나온다)
+if [ ! -d wheels ] && [ -z "${F5_CKPT:-}" ] && [ ! -f models/f5-ko/model.safetensors ]; then echo "  · 한국어 F5-TTS 체크포인트 (1.3GB)"; venv/bin/python scripts/f5_ko.py && ok "한국어 목소리 복제 모델"; fi
+# 목소리 복제(F5-TTS)는 torchaudio→torchcodec 으로 오디오를 읽는데, FFmpeg *공유* 라이브러리가 필요하다(정적 ffmpeg 로는 안 됨)
+FFLIB="${FFMPEG_LIB_DIR:-$HOME/.local/ffmpeg-shared/lib}"
+if [ ! -d wheels ] && ! LD_LIBRARY_PATH="$FFLIB:${LD_LIBRARY_PATH:-}" venv/bin/python -c "import torchcodec.decoders" 2>/dev/null; then
+  CONDA=$(command -v mamba || command -v conda || ls "$HOME"/miniforge3/bin/mamba "$HOME"/miniconda3/bin/conda 2>/dev/null | head -1)
+  if [ -n "$CONDA" ]; then echo "  · FFmpeg 공유 라이브러리 설치 (conda, 목소리 복제용)"; "$CONDA" create -y -q -p "$HOME/.local/ffmpeg-shared" -c conda-forge "ffmpeg=7" >/dev/null && ok "FFmpeg 공유 라이브러리"
+  else echo "  ! 목소리 복제엔 FFmpeg 공유 라이브러리(libavcodec 등)가 필요합니다: apt install ffmpeg 또는 FFMPEG_LIB_DIR 지정 (샘플 없이 TTS 목소리는 동작)"; fi
+fi
 mkdir -p shim/gfpgan; [ -f shim/sitecustomize.py ] || printf 'import numpy as _np\n_np.float, _np.int = float, int\n' > shim/sitecustomize.py; [ -f shim/gfpgan/__init__.py ] || printf 'class GFPGANer:  # ponytail: 얼굴 보정(gfpgan)은 안 씀 — basicsr 가 최신 torchvision 과 깨져서 스텁\n    pass\n' > shim/gfpgan/__init__.py
 if [ ! -f vendor/SadTalker/inference.py ]; then
   command -v git >/dev/null || die "git 필요 (또는 pack.sh 번들)"

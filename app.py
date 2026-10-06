@@ -19,8 +19,13 @@ PORT = int(os.environ.get("PORT", "8777"))
 DEVICE = os.environ.get("DEVICE", "cpu")
 TTS = os.environ.get("TTS_BASE_URL", "").rstrip("/")
 TTS_VOICE = os.environ.get("TTS_VOICE", "KR")
-TTS_MODEL = os.environ.get("TTS_MODEL", "melo")  # tts-local(MeloTTS) 기준
-F5_MODEL, F5_CKPT = os.environ.get("F5_MODEL", "F5TTS_v1_Base"), os.environ.get("F5_CKPT", "")
+TTS_MODEL = os.environ.get("TTS_MODEL", "melo")
+FFMPEG_LIB = os.environ.get("FFMPEG_LIB_DIR", os.path.expanduser("~/.local/ffmpeg-shared/lib"))  # setup.sh 가 conda 로 깔아 두는 자리  # tts-local(MeloTTS) 기준
+F5_MODEL, F5_CKPT, F5_VOCAB = os.environ.get("F5_MODEL", "F5TTS_v1_Base"), os.environ.get("F5_CKPT", ""), os.environ.get("F5_VOCAB", "")
+_KO = os.path.join(ROOT, "models", "f5-ko")  # scripts/f5_ko.py 가 만드는 한국어 체크포인트(자모 단위) — 있으면 기본으로
+if not F5_CKPT and os.path.exists(os.path.join(_KO, "model.safetensors")):
+    F5_CKPT, F5_VOCAB = os.path.join(_KO, "model.safetensors"), os.path.join(_KO, "vocab.txt")
+F5_JAMO = bool(F5_VOCAB) and "ᄀ" in open(F5_VOCAB, encoding="utf-8").read()  # 어휘가 한글 자모면 글을 NFD 로 풀어 넣는다
 RUN_RE = r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}"
 
 
@@ -37,11 +42,18 @@ def to_wav(src, dst):
 def tts(text, out_wav, ref_wav=None, ref_text=""):
     """목소리 복제(F5-TTS, 샘플 필요) 또는 TTS 서버 폴백. 둘 다 없으면 에러."""
     if ref_wav and os.path.exists(os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli")):
-        cmd = [os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli"), "--model", F5_MODEL, "--ref_audio", ref_wav, "--ref_text", ref_text,
-               "--gen_text", text, "--output_dir", os.path.dirname(out_wav), "--output_file", os.path.basename(out_wav), "--device", DEVICE]
+        import unicodedata
+        nfd = (lambda s: unicodedata.normalize("NFD", s)) if F5_JAMO else (lambda s: s)
+        cmd = [os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli"), "--model", F5_MODEL, "--ref_audio", ref_wav, "--ref_text", nfd(ref_text),
+               "--gen_text", nfd(text), "--output_dir", os.path.dirname(out_wav), "--output_file", os.path.basename(out_wav), "--device", DEVICE]
         if F5_CKPT:
             cmd += ["--ckpt_file", F5_CKPT]
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
+        if F5_VOCAB:
+            cmd += ["--vocab_file", F5_VOCAB]
+        env = dict(os.environ)
+        if os.path.isdir(FFMPEG_LIB):  # torchaudio(torchcodec)가 오디오를 읽을 FFmpeg 공유 라이브러리 — 정적 ffmpeg 만 있는 서버용
+            env["LD_LIBRARY_PATH"] = FFMPEG_LIB + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, env=env)
         if r.returncode or not os.path.exists(out_wav):
             raise RuntimeError("F5-TTS 실패: " + (r.stderr or r.stdout)[-300:])
         return "f5"

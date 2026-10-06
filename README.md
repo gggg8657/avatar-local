@@ -37,3 +37,8 @@ python3 app.py --cli photo.jpg voice.wav "대사" -o out.mp4 --ref-text "샘플�
 - 한국어 목소리 복제는 기본 모델로는 어색함(영·중 모델). 샘플 없이 tts-local 목소리면 자연스럽지만 "내 목소리"는 아님.
 - 256px 얼굴 크롭 기준 화질. 고화질(512)·보정(gfpgan)은 꺼 둠(basicsr 가 최신 torchvision 과 충돌).
 - 정면·단일 얼굴 사진만. 안경·측면은 흔들림.
+
+### 한국어 목소리 복제 (2026-10-06)
+기본 F5-TTS 는 영·중 학습이라 한국어가 알아들을 수 없게 나온다. setup.sh 가 [team-lucid/F5-TTS-ko](https://huggingface.co/team-lucid/F5-TTS-ko)(Apache-2.0, 한글 자모 어휘)를 받아
+`scripts/f5_ko.py` 로 `models/f5-ko/`(model.safetensors + vocab.txt)로 변환하고, app 은 이게 있으면 기본으로 쓰며 글을 자모(NFD)로 풀어 넣는다.
+GPU 에서 한 문장 약 30초, 받아쓰기로 확인한 문장이 목표와 일치. 오디오 읽기(torchcodec)에 FFmpeg 공유 라이브러리가 필요해 없으면 conda 로 `~/.local/ffmpeg-shared` 에 깐다(`FFMPEG_LIB_DIR`).
