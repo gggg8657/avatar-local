@@ -76,6 +76,8 @@ def lipsync(photo, wav, d, emit):
             emit({"log": line[-120:]})
     p.wait()
     if p.returncode or not out or not os.path.exists(out):
+        if any("landmark" in l for l in log):  # SadTalker 가 얼굴을 못 찾음 — 원문 스택 대신 고칠 방법을
+            raise RuntimeError("사진에서 얼굴을 찾지 못했습니다. 얼굴이 정면으로 크게 나온 사진(안경·측면·그림 실루엣 X)을 쓰세요.")
         raise RuntimeError("립싱크 실패:\n" + "\n".join(log[-8:]))
     return out
 
