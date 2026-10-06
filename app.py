@@ -121,6 +121,23 @@ def status():
 
 HTML = open(os.path.join(ROOT, "ui.html"), encoding="utf-8").read()
 
+# ── 저작권 표기 (LICENSE·NOTICE 참고) ─────────────────────────────────────
+_SIG = __import__("base64").b64decode("wqkgMjAyNiDquYDrj5nso7wgwrcgZG9uZ2p1a2ltLmRldkBnbWFpbC5jb20=").decode()
+_SIG_A = __import__("base64").b64decode("RG9uZ0p1IEtpbSA8ZG9uZ2p1a2ltLmRldkBnbWFpbC5jb20+").decode()
+
+
+def signed(html):
+    """화면에 저작권 표기를 붙인다. ui.html 에서 지워져도 서버가 내보낼 때 다시 붙는다."""
+    name, mail = _SIG.split(" · ")
+    if 'name="author"' not in html:
+        meta = f'<meta name="author" content="{name[7:]} <{mail}>">'
+        html = html.replace("<head>", "<head>" + meta, 1) if "<head>" in html else meta + html
+    if "data-sig" not in html:
+        tag = (f'<!-- {_SIG} --><div data-sig title="{mail}" style="text-align:center;font-size:11px;color:#9aa0a6;'
+               f'opacity:.55;margin:28px 0 8px">{name}</div>')
+        html = html.replace("</body>", tag + "</body>", 1) if "</body>" in html else html + tag
+    return html
+
 
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
@@ -128,7 +145,7 @@ class H(BaseHTTPRequestHandler):
 
     def _send(self, body, ctype="application/json", code=200):
         b = body if isinstance(body, bytes) else json.dumps(body, ensure_ascii=False).encode()
-        self.send_response(code); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
+        self.send_response(code); self.send_header("X-Author", _SIG_A); self.send_header("Content-Type", ctype); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
 
     def do_GET(self):
         p = self.path.split("?")[0]
@@ -141,7 +158,7 @@ class H(BaseHTTPRequestHandler):
             f = os.path.join(WS, m.group(1), "final.mp4")
             if os.path.exists(f):
                 return self._send(open(f, "rb").read(), "video/mp4")
-        self._send(HTML.encode(), "text/html; charset=utf-8")
+        self._send(signed(HTML).encode(), "text/html; charset=utf-8")
 
     def do_POST(self):
         if self.path != "/api/run":
@@ -188,5 +205,5 @@ if __name__ == "__main__":
         m = generate(photo, text, voice, ref_text, consent=True, emit=lambda ev: print(ev.get("msg") or ev.get("log", ""), file=sys.stderr))
         shutil.copy(os.path.join(WS, m["run_id"], "final.mp4"), out); print(out)
         sys.exit(0)
-    print(f"avatar-local → http://localhost:{PORT}  {status()}")
+    print(f"avatar-local → http://localhost:{PORT}  {status()}  {_SIG}")
     ThreadingHTTPServer(("", PORT), H).serve_forever()
