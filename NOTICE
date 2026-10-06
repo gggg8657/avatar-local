@@ -2,8 +2,7 @@ avatar-local
 ============
 Wraps (does not modify):
   SadTalker — https://github.com/OpenTalker/SadTalker — Apache-2.0 (third-party components listed in its LICENSE), vendored at setup time into vendor/
-  F5-TTS — https://github.com/SWivid/F5-TTS — MIT (model weights F5TTS_v1_Base, CC-BY-NC-4.0 per HF model card: personal/research use)
-  team-lucid/F5-TTS-ko — https://huggingface.co/team-lucid/F5-TTS-ko — Apache-2.0 (Korean F5 checkpoint, downloaded at setup)
+  Speech audio comes only from the separate tts-local tool (MeloTTS, MIT) over HTTP; no voice cloning and no TTS model is bundled.
   diffusers — https://github.com/huggingface/diffusers — Apache-2.0; models (downloaded on first use, not redistributed):
     Qwen/Qwen-Image-2512 — https://huggingface.co/Qwen/Qwen-Image-2512 — Apache-2.0 (character pictures)
     Wan-AI/Wan2.2-I2V-A14B-Diffusers — https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B-Diffusers — Apache-2.0 (picture → motion video)
@@ -13,7 +12,7 @@ Wraps (does not modify):
   face_alignment (BSD-3), facexlib (MIT, weights for detection/parsing), torch/torchvision (BSD)
 shim/gfpgan is a local stub so SadTalker imports without gfpgan/basicsr; no GFPGAN code is used.
 Files authored here (MIT): app.py studio_worker.py gpu_pick.py ui.html selftest.py setup.sh pack.sh README.md
-Usage rule: only your own or explicitly consented face/voice; no face swap is implemented.
+Usage rule: only your own or explicitly consented face; no face swap and no voice cloning is implemented.
 
 LLM (not bundled): called via an OpenAI-compatible API; default deployment is Ollama (https://github.com/ollama/ollama, MIT)
   serving Google Gemma (gemma4:31b, https://ai.google.dev/gemma — see Gemma's terms of use).

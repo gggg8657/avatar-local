@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
-"""avatar-local — 내 얼굴·내 목소리 아바타 (토이). 사진 + 음성 샘플 + 대사 → 립싱크 mp4.
-서버는 stdlib, 추론은 venv 서브프로세스(SadTalker, Apache-2.0 / F5-TTS, MIT).
-규칙: 본인(또는 명시적으로 동의한 사람)의 얼굴·목소리만. 타인 영상에 얼굴을 바꿔 끼우는 기능은 없고, 넣지 않는다.
+"""avatar-local — 내 얼굴 아바타 · 가상 캐릭터 스튜디오 (토이). 사진 + 대사 → 립싱크 mp4.
+서버는 stdlib, 추론은 venv 서브프로세스(SadTalker, Apache-2.0). 목소리는 TTS 도구(tts-local, MeloTTS)만 쓴다 — 목소리 복제는 없다.
+규칙: 본인(또는 명시적으로 동의한 사람)의 얼굴만. 타인 영상에 얼굴을 바꿔 끼우는 기능은 없고, 넣지 않는다.
 
   bash setup.sh                                     # http://localhost:8777
-  python3 app.py --cli photo.jpg voice.wav "대사" -o out.mp4 [--ref-text "샘플에서 말한 문장"]
+  python3 app.py --cli photo.jpg "대사" -o out.mp4
 
-env: PORT(8777) DEVICE(cpu|cuda, 기본 cpu — SadTalker 는 mps 미지원) VOICE_ENGINE(f5|server, 기본 f5 샘플 있으면 f5)
-     TTS_BASE_URL(OpenAI 호환 /v1, 샘플 없을 때 폴백) TTS_VOICE F5_MODEL(F5TTS_v1_Base) F5_CKPT(한국어 등 커스텀 ckpt 경로)"""
+env: PORT(8777) DEVICE(cpu|cuda, 기본 cpu — SadTalker 는 mps 미지원)
+     TTS_BASE_URL(OpenAI 호환 /v1, 기본 tts-local http://127.0.0.1:8771/v1) TTS_VOICE(KR) TTS_MODEL(melo)"""
 import base64, datetime, json, os, re, secrets, shutil, subprocess, sys, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from gpu_pick import env_for, label, pick
+from gpu_pick import env_for, label, pick, release
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WS = os.environ.get("WORKSPACE") or os.path.join(ROOT, "_workspace")  # 포털이 AGENT_DATA/<도구> 로 모아 줌
@@ -19,15 +19,9 @@ ST = os.path.join(ROOT, "vendor", "SadTalker")
 PY = os.path.join(ROOT, "venv", "bin", "python")
 PORT = int(os.environ.get("PORT", "8777"))
 DEVICE = os.environ.get("DEVICE", "cpu")
-TTS = os.environ.get("TTS_BASE_URL", "").rstrip("/")
+TTS = (os.environ.get("TTS_BASE_URL") or "http://127.0.0.1:8771/v1").rstrip("/")
 TTS_VOICE = os.environ.get("TTS_VOICE", "KR")
 TTS_MODEL = os.environ.get("TTS_MODEL", "melo")
-FFMPEG_LIB = os.environ.get("FFMPEG_LIB_DIR", os.path.expanduser("~/.local/ffmpeg-shared/lib"))  # setup.sh 가 conda 로 깔아 두는 자리
-F5_MODEL, F5_CKPT, F5_VOCAB = os.environ.get("F5_MODEL", "F5TTS_v1_Base"), os.environ.get("F5_CKPT", ""), os.environ.get("F5_VOCAB", "")
-_KO = os.path.join(ROOT, "models", "f5-ko")  # scripts/f5_ko.py 가 만드는 한국어 체크포인트(자모 단위) — 있으면 기본으로
-if not F5_CKPT and os.path.exists(os.path.join(_KO, "model.safetensors")):
-    F5_CKPT, F5_VOCAB = os.path.join(_KO, "model.safetensors"), os.path.join(_KO, "vocab.txt")
-F5_JAMO = bool(F5_VOCAB) and "ᄀ" in open(F5_VOCAB, encoding="utf-8").read()  # 어휘가 한글 자모면 글을 NFD 로 풀어 넣는다
 RUN_RE = r"\d{4}-\d{2}-\d{2}-[0-9a-f]{4}"
 
 
@@ -35,43 +29,18 @@ def ffmpeg(*a):
     return subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *a], capture_output=True, text=True)
 
 
-def to_wav(src, dst):
-    r = ffmpeg("-i", src, "-ac", "1", "-ar", "24000", dst)
-    if r.returncode:
-        raise RuntimeError("음성 변환 실패: " + r.stderr[-200:])
-
-
-def tts(text, out_wav, ref_wav=None, ref_text=""):
-    """목소리 복제(F5-TTS, 샘플 필요) 또는 TTS 서버 폴백. 둘 다 없으면 에러."""
-    if ref_wav and os.path.exists(os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli")):
-        import unicodedata
-        nfd = (lambda s: unicodedata.normalize("NFD", s)) if F5_JAMO else (lambda s: s)
-        cmd = [os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli"), "--model", F5_MODEL, "--ref_audio", ref_wav, "--ref_text", nfd(ref_text),
-               "--gen_text", nfd(text), "--output_dir", os.path.dirname(out_wav), "--output_file", os.path.basename(out_wav), "--device", DEVICE]
-        if F5_CKPT:
-            cmd += ["--ckpt_file", F5_CKPT]
-        if F5_VOCAB:
-            cmd += ["--vocab_file", F5_VOCAB]
-        env = dict(os.environ)
-        if DEVICE == "cuda":  # GPU 고정 없음 — 실행할 때마다 여유 메모리가 가장 큰 GPU 1장만 보이게
-            g = pick(6000); env = env_for(g, env); print(f"[f5] 목소리 합성 {label(g)} 에서 실행", flush=True)
-            if not g: cmd[cmd.index("--device") + 1] = "cpu"
-        if os.path.isdir(FFMPEG_LIB):  # torchaudio(torchcodec)가 오디오를 읽을 FFmpeg 공유 라이브러리 — 정적 ffmpeg 만 있는 서버용
-            env["LD_LIBRARY_PATH"] = FFMPEG_LIB + (":" + env["LD_LIBRARY_PATH"] if env.get("LD_LIBRARY_PATH") else "")
-        r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600, env=env)
-        if r.returncode or not os.path.exists(out_wav):
-            raise RuntimeError("F5-TTS 실패: " + (r.stderr or r.stdout)[-300:])
-        return "f5"
-    if TTS:
-        req = urllib.request.Request(TTS + "/audio/speech", json.dumps({"model": TTS_MODEL, "input": text, "voice": TTS_VOICE, "response_format": "wav"}).encode(),
-                                     {"Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=600) as r, open(out_wav, "wb") as f:
-                f.write(r.read())
-        except urllib.error.HTTPError as e:  # 서버가 준 오류 내용을 그대로("HTTP Error 500" 만으로는 원인을 모름)
-            raise RuntimeError(f"TTS 서버 오류 {e.code}: {e.read().decode(errors='replace')[:300]}")
-        return "server"
-    raise RuntimeError("음성 엔진 없음: 목소리 샘플을 올리거나 TTS_BASE_URL 을 지정하세요")
+def tts(text, out_wav):
+    """대사 → wav. TTS 도구(tts-local, OpenAI 호환 /v1/audio/speech)만 쓴다 — 목소리 복제 없음(라이선스)."""
+    req = urllib.request.Request(TTS + "/audio/speech", json.dumps({"model": TTS_MODEL, "input": text, "voice": TTS_VOICE, "response_format": "wav"}).encode(),
+                                 {"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=600) as r, open(out_wav, "wb") as f:
+            f.write(r.read())
+    except urllib.error.HTTPError as e:  # 서버가 준 오류 내용을 그대로("HTTP Error 500" 만으로는 원인을 모름)
+        raise RuntimeError(f"TTS 도구 오류 {e.code}: {e.read().decode(errors='replace')[:300]}")
+    except (urllib.error.URLError, OSError) as e:
+        raise RuntimeError(f"TTS 도구(tts-local)를 켜 주세요 — 목소리를 만들 수 없습니다 ({TTS}: {getattr(e, 'reason', e)})")
+    return "tts-local"
 
 
 def lipsync(photo, wav, d, emit, full=False):
@@ -79,22 +48,26 @@ def lipsync(photo, wav, d, emit, full=False):
     cmd = [PY, "inference.py", "--driven_audio", wav, "--source_image", photo, "--result_dir", d, "--checkpoint_dir", os.path.join(ROOT, "weights", "checkpoints"),
            "--still", "--preprocess", "full" if full else "crop", "--size", "256", "--batch_size", "4"] + (["--cpu"] if DEVICE == "cpu" else [])
     env = {**os.environ, "PYTHONPATH": os.path.join(ROOT, "shim"), "PYTHONUNBUFFERED": "1"}
+    g = None
     if DEVICE == "cuda":  # 실행할 때마다 여유 메모리가 가장 큰 GPU 1장만 보이게 (SadTalker 는 그 안에서 cuda)
         g = pick(6000); env = env_for(g, env); emit({"log": f"립싱크 {label(g)} 에서 실행"})
         if not g: cmd.append("--cpu")
-    p = subprocess.Popen(cmd, cwd=ST, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     out, log = None, []
-    for line in p.stdout:
-        line = line.strip()
-        if not line:
-            continue
-        log.append(line)
-        m = re.search(r"generated video is named:\s*(\S+\.mp4)", line)
-        if m:
-            out = m.group(1)
-        if "%" in line or "it/s" in line or "named" in line:  # 진행 표시만 UI 로
-            emit({"log": line[-120:]})
-    p.wait()
+    try:
+        p = subprocess.Popen(cmd, cwd=ST, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in p.stdout:
+            line = line.strip()
+            if not line:
+                continue
+            log.append(line)
+            m = re.search(r"generated video is named:\s*(\S+\.mp4)", line)
+            if m:
+                out = m.group(1)
+            if "%" in line or "it/s" in line or "named" in line:  # 진행 표시만 UI 로
+                emit({"log": line[-120:]})
+        p.wait()
+    finally:
+        release(g)  # pick 이 남긴 GPU 예약을 푼다
     if p.returncode or not out or not os.path.exists(out):
         if any("landmark" in l for l in log):  # SadTalker 가 얼굴을 못 찾음 — 원문 스택 대신 고칠 방법을
             raise RuntimeError("사진에서 얼굴을 찾지 못했습니다. 얼굴이 정면으로 크게 나온 사진(안경·측면·그림 실루엣 X)을 쓰세요.")
@@ -102,9 +75,9 @@ def lipsync(photo, wav, d, emit, full=False):
     return out
 
 
-def generate(photo, text, voice=None, ref_text="", consent=False, emit=lambda ev: None):
+def generate(photo, text, consent=False, emit=lambda ev: None):
     if not consent:
-        raise ValueError("본인(또는 동의한 사람)의 얼굴·목소리임을 확인해야 합니다")
+        raise ValueError("본인(또는 동의한 사람)의 얼굴임을 확인해야 합니다")
     if not text.strip():
         raise ValueError("대사가 비었습니다")
     run_id = f"{datetime.date.today()}-{secrets.token_hex(2)}"
@@ -112,13 +85,9 @@ def generate(photo, text, voice=None, ref_text="", consent=False, emit=lambda ev
     os.makedirs(d)
     shutil.copy(photo, os.path.join(d, "photo" + os.path.splitext(photo)[1].lower()))
     photo = os.path.join(d, "photo" + os.path.splitext(photo)[1].lower())
-    ref = None
-    if voice:
-        emit({"stage": "voice", "msg": "음성 샘플 변환"})
-        ref = os.path.join(d, "ref.wav"); to_wav(voice, ref)
-    emit({"stage": "tts", "msg": "목소리 합성 " + ("(내 목소리 복제)" if ref else "(TTS 서버)")})
+    emit({"stage": "tts", "msg": "목소리 합성 (TTS 도구)"})
     wav = os.path.join(d, "speech.wav")
-    engine = tts(text, wav, ref, ref_text)
+    engine = tts(text, wav)
     emit({"stage": "lipsync", "msg": "립싱크 영상 생성 (CPU 는 수 분)"})
     mp4 = lipsync(photo, wav, d, emit)
     final = os.path.join(d, "final.mp4")
@@ -259,42 +228,44 @@ def s2v(photo, wav, out, prompt, emit):
     cmd = [PY, "generate.py", "--task", "s2v-14B", "--size", "1024*704", "--ckpt_dir", ckpt, "--offload_model", "True", "--convert_model_dtype",
            "--prompt", prompt, "--image", photo, "--audio", padded, "--save_file", out, "--base_seed", str(secrets.randbelow(10 ** 6))]
     env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONPATH": os.path.join(ROOT, "shim", "wan")}  # flash_attn 대역(SDPA) — nvcc 없이 빌드 불가
+    g = None
     if DEVICE == "cuda":
-        g = pick(S2V_NEED_MB)
+        g = pick(S2V_NEED_MB, hold_s=7200)  # 오프로드라 메모리를 올렸다 내렸다 함 → 끝날 때까지 예약
         if not g: raise RuntimeError(f"GPU 여유 메모리 부족 — 약 {S2V_NEED_MB // 1024}GB 필요. 잠시 뒤 다시 하거나 '빠르게' 로")
         env = env_for(g, env); emit({"log": f"말하기 영상 {label(g)} 에서 실행"})
-    p = subprocess.Popen(cmd, cwd=WAN, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    log, clip, last, gen = [], 1, 0, False
-    for line in p.stdout:  # tqdm 의 \r 도 줄바꿈으로 들어온다
-        line = line.strip()
-        if not line: continue
-        log.append(line); log = log[-40:]
-        gen = gen or "Generating video" in line  # 그 전의 진행 막대(가중치 읽기)는 단계로 치지 않는다
-        m = gen and re.search(r"(\d+)/(\d+) \[", line)
-        if m:
-            i, n = int(m.group(1)), int(m.group(2))
-            if i < last: clip += 1  # 대사가 길면 5초 단위 조각(clip)을 이어 만든다
-            if i != last: emit({"step": i, "total": n, "clip": clip}); last = i
-        else:
-            for k, msg in (("Creating WanS2V", "모델 올리는 중 (약 1분)"), ("Generating video", "영상 만드는 중 — 5초 조각마다 40단계"), ("Saving generated", "저장·음성 합치는 중")):
-                if k in line: emit({"log": msg})
-    p.wait()
-    if os.path.exists(padded): os.remove(padded)
+    log, clip, last, gen, p = [], 1, 0, False, None
+    try:
+        p = subprocess.Popen(cmd, cwd=WAN, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        for line in p.stdout:  # tqdm 의 \r 도 줄바꿈으로 들어온다
+            line = line.strip()
+            if not line: continue
+            log.append(line); log = log[-40:]
+            gen = gen or "Generating video" in line  # 그 전의 진행 막대(가중치 읽기)는 단계로 치지 않는다
+            m = gen and re.search(r"(\d+)/(\d+) \[", line)
+            if m:
+                i, n = int(m.group(1)), int(m.group(2))
+                if i < last: clip += 1  # 대사가 길면 5초 단위 조각(clip)을 이어 만든다
+                if i != last: emit({"step": i, "total": n, "clip": clip}); last = i
+            else:
+                for k, msg in (("Creating WanS2V", "모델 올리는 중 (약 1분)"), ("Generating video", "영상 만드는 중 — 5초 조각마다 40단계"), ("Saving generated", "저장·음성 합치는 중")):
+                    if k in line: emit({"log": msg})
+        p.wait()
+    finally:
+        if p and p.poll() is None: p.kill(); p.wait()  # 화면을 닫아 중간에 끊기면 GPU 를 계속 잡지 않게
+        release(g)
+        if os.path.exists(padded): os.remove(padded)
     if p.returncode or not os.path.exists(out):
         raise RuntimeError("말하기 영상 실패:\n" + "\n".join(log[-8:]))
     return out
 
 
-def speak(run_id, idx, text, voice=None, ref_text="", quality="best", emit=lambda ev: None):
+def speak(run_id, idx, text, quality="best", emit=lambda ev: None):
     """고른 그림이 대사를 말하는 영상. 최고 품질 = Wan2.2-S2V(얼굴·상반신·입모양, 5초마다 약 23분) / 빠르게 = SadTalker(얼굴만, 수십 초)"""
     d, meta = char_dir(run_id)
     if not text.strip(): raise ValueError("대사가 비었습니다")
     img = os.path.join(d, f"cand_{int(idx)}.png")
-    ref = None
-    if voice:
-        ref = os.path.join(d, "ref.wav"); to_wav(voice, ref)
-    emit({"stage": "tts", "msg": "목소리 합성 " + ("(목소리 복제)" if ref else "(TTS)")})
-    wav = os.path.join(d, "talk.wav"); engine = tts(text, wav, ref, ref_text)
+    emit({"stage": "tts", "msg": "목소리 합성 (TTS 도구)"})
+    wav = os.path.join(d, "talk.wav"); engine = tts(text, wav)
     out = os.path.join(d, "talk.mp4")
     if quality == "fast":
         emit({"stage": "lipsync", "msg": "립싱크 (빠르게 — 얼굴만)"})
@@ -403,9 +374,12 @@ def restore_trash(batch):
 
 
 def status():
+    try:  # TTS 도구가 켜져 있는지 (목소리는 이것만 씀)
+        urllib.request.urlopen(TTS + "/models", timeout=2); tts_up = True
+    except Exception:
+        tts_up = False
     return {"sadtalker": os.path.exists(os.path.join(ROOT, "weights", "checkpoints", "SadTalker_V0.0.2_256.safetensors")) and os.path.exists(os.path.join(ST, "inference.py")),
-            "f5": os.path.exists(os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli")), "tts_server": bool(TTS), "device": DEVICE,
-            "f5_korean": bool(F5_CKPT), "s2v": os.path.exists(os.path.join(WAN, "generate.py"))}
+            "tts_server": tts_up, "device": DEVICE, "s2v": os.path.exists(os.path.join(WAN, "generate.py"))}
 
 
 HTML = open(os.path.join(ROOT, "ui.html"), encoding="utf-8").read()
@@ -462,23 +436,16 @@ class H(BaseHTTPRequestHandler):
 
         def emit(ev):
             self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()); self.wfile.flush()
-        voice = None
         try:
             if self.path == "/api/imagine":
                 r = imagine(req.get("desc") or "", req.get("style") or "real", req.get("shot") or "half", req.get("n") or 4, emit)
             elif self.path == "/api/speak":
-                if req.get("voice_b64"):
-                    up = os.path.join(WS, "_upload"); os.makedirs(up, exist_ok=True)
-                    voice = os.path.join(up, secrets.token_hex(3) + "_" + re.sub(r"[^\w.\-]", "_", os.path.basename(req.get("voice_name") or "voice.wav")))
-                    open(voice, "wb").write(base64.b64decode(req["voice_b64"]))
-                r = speak(req.get("run_id"), req.get("idx", 0), req.get("text") or "", voice, req.get("ref_text") or "", req.get("quality") or "best", emit)
+                r = speak(req.get("run_id"), req.get("idx", 0), req.get("text") or "", req.get("quality") or "best", emit)
             else:
                 r = move(req.get("run_id"), req.get("idx", 0), req.get("action") or "", req.get("text") or "", req.get("quality") or "best", emit)
             emit({"done": r})
         except Exception as e:
             emit({"error": f"{type(e).__name__}: {e}"})
-        finally:
-            if voice and os.path.exists(voice): os.remove(voice)
 
     def do_DELETE(self):
         m = re.fullmatch(rf"/api/runs/({RUN_RE})", self.path)
@@ -522,29 +489,26 @@ class H(BaseHTTPRequestHandler):
 
         def emit(ev):
             self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()); self.wfile.flush()
-        photo = voice = None
+        photo = None
         try:
             photo = save("photo_b64", "photo_name", (".jpg", ".jpeg", ".png"))
             if not photo:
                 raise ValueError("사진이 필요합니다")
-            voice = save("voice_b64", "voice_name", (".wav", ".mp3", ".m4a", ".webm", ".ogg"))
-            emit({"done": generate(photo, req.get("text") or "", voice, req.get("ref_text") or "", bool(req.get("consent")), emit)})
+            emit({"done": generate(photo, req.get("text") or "", bool(req.get("consent")), emit)})
         except Exception as e:
             emit({"error": f"{type(e).__name__}: {e}"})
         finally:
-            for p in (photo, voice):
-                if p and os.path.exists(p):
-                    os.remove(p)
+            if photo and os.path.exists(photo):
+                os.remove(photo)
 
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--cli":
         a = sys.argv[2:]
         out = a[a.index("-o") + 1] if "-o" in a else "out.mp4"
-        ref_text = a[a.index("--ref-text") + 1] if "--ref-text" in a else ""
-        pos = [x for i, x in enumerate(a) if x not in ("-o", "--ref-text") and (i == 0 or a[i - 1] not in ("-o", "--ref-text"))]
-        photo, voice, text = pos[0], (pos[1] if len(pos) > 2 else None), pos[-1]
-        m = generate(photo, text, voice, ref_text, consent=True, emit=lambda ev: print(ev.get("msg") or ev.get("log", ""), file=sys.stderr))
+        pos = [x for i, x in enumerate(a) if x != "-o" and (i == 0 or a[i - 1] != "-o")]
+        photo, text = pos[0], pos[-1]
+        m = generate(photo, text, consent=True, emit=lambda ev: print(ev.get("msg") or ev.get("log", ""), file=sys.stderr))
         shutil.copy(os.path.join(WS, m["run_id"], "final.mp4"), out); print(out)
         sys.exit(0)
     print(f"avatar-local → http://localhost:{PORT}  {status()}  {_SIG}")

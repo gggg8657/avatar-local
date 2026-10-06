@@ -4,32 +4,37 @@ import os, shutil, subprocess, tempfile, wave, struct, math
 os.environ["WORKSPACE"] = tempfile.mkdtemp()
 import app
 
-def fake_tts(text, out_wav, ref_wav=None, ref_text=""):
+def fake_tts(text, out_wav):
     with wave.open(out_wav, "wb") as w:
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(24000)
         w.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(i / 20))) for i in range(24000)))
-    return "fake-clone" if ref_wav else "fake-server"
+    return "fake-server"
 
 def fake_lipsync(photo, wav, d, emit):
     out = os.path.join(d, "gen.mp4"); emit({"log": "fake 50%"})
     assert subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=gray:s=64x64:d=1", "-i", wav, "-shortest", out]).returncode == 0
     return out
 
+real_tts = app.tts
 app.tts, app.lipsync = fake_tts, fake_lipsync
-d = tempfile.mkdtemp(); photo = os.path.join(d, "p.png"); voice = os.path.join(d, "v.wav")
+d = tempfile.mkdtemp(); photo = os.path.join(d, "p.png")
 subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=64x64:d=1", "-frames:v", "1", photo], check=True)
-fake_tts("", voice)
 # 동의 없으면 거부
-try: app.generate(photo, "안녕", voice, consent=False); raise SystemExit("동의 게이트 실패")
+try: app.generate(photo, "안녕", consent=False); raise SystemExit("동의 게이트 실패")
 except ValueError: pass
 events = []
-m = app.generate(photo, "안녕하세요", voice, "hi", consent=True, emit=events.append)
-assert m["engine"] == "fake-clone" and os.path.exists(os.path.join(app.WS, m["run_id"], "final.mp4"))
-assert [e["stage"] for e in events if "stage" in e] == ["voice", "tts", "lipsync"] and any("log" in e for e in events)
-m2 = app.generate(photo, "두 번째", None, consent=True)
+m = app.generate(photo, "안녕하세요", consent=True, emit=events.append)
+assert m["engine"] == "fake-server" and os.path.exists(os.path.join(app.WS, m["run_id"], "final.mp4"))
+assert [e["stage"] for e in events if "stage" in e] == ["tts", "lipsync"] and any("log" in e for e in events)
+m2 = app.generate(photo, "두 번째", consent=True)
 assert m2["engine"] == "fake-server" and app.list_runs()[0]["run_id"] == m2["run_id"]
 assert "src=\"/" not in app.HTML and "fetch('/" not in app.HTML and "'/api/" not in app.HTML, "ui.html 에 절대경로"
-assert set(app.status()) >= {"sadtalker", "f5", "tts_server"}
+assert set(app.status()) >= {"sadtalker", "tts_server", "s2v"} and "f5" not in app.status()
+# 목소리는 TTS 도구만: 꺼져 있으면 알아듣기 쉬운 한국어 오류
+_url, app.TTS = app.TTS, "http://127.0.0.1:9/v1"  # 아무도 안 듣는 포트
+try: real_tts("안녕", os.path.join(d, "x.wav")); raise SystemExit("TTS 꺼짐 오류 실패")
+except RuntimeError as e: assert "TTS 도구(tts-local)를 켜 주세요" in str(e), e
+app.TTS = _url
 # 갤러리 지우기: 휴지통(.trash/<묶음>/)으로 옮김 · 경로 조작/링크 거부 · 되살리기 · HTTP
 import json, threading, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer
