@@ -7,41 +7,76 @@
   POST /video   {image, prompt, negative, width, height, frames, steps, out} → out(mp4, 24fps)
   POST /mouth   {image}                                                      → {x, y, w} (그림 크기 대비 비율)
 
-env: STUDIO_PORT(8787) STUDIO_DEVICE(기본: GPU 가 둘 이상이면 cuda:1 — 0번은 Ollama·TTS 가 씀)
+GPU 는 고정하지 않는다: 모델을 올릴 때마다 그 순간 여유 메모리가 가장 큰 GPU 를 고르고(gpu_pick.py),
+GPU_IDLE_UNLOAD_S(기본 600초) 동안 안 쓰면 내려서 VRAM 을 돌려준다.
+env: STUDIO_PORT(8787) STUDIO_DEVICE(비우면 자동 선택, cuda:1 처럼 주면 고정) GPU_POOL GPU_IDLE_UNLOAD_S
      IMAGE_MODEL(Qwen/Qwen-Image) VIDEO_MODEL(Wan-AI/Wan2.2-TI2V-5B-Diffusers)"""
-import gc, json, os, threading, traceback
+import json, os, threading, time, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from gpu_pick import IDLE_S, free_cuda, gpus, label, pick, torch_device  # torch 보다 먼저 (CUDA_DEVICE_ORDER)
 import torch
 from PIL import Image
 
 PORT = int(os.environ.get("STUDIO_PORT", "8787"))
-DEV = os.environ.get("STUDIO_DEVICE") or ("cuda:1" if torch.cuda.device_count() > 1 else "cuda:0" if torch.cuda.is_available() else "cpu")
+DEV = os.environ.get("STUDIO_DEVICE", "")  # 비우면 모델 올릴 때마다 자동
+NEED_MB = {"image": 60000, "video": 36000, "face": 2000}  # 모델별로 GPU 에 필요한 여유(대략)
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "Qwen/Qwen-Image")
 VIDEO_MODEL = os.environ.get("VIDEO_MODEL", "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
 LOCK = threading.Lock()
-_cur = {"name": None, "pipe": None}
+_cur = {"name": None, "pipe": None, "dev": "cpu", "where": "아직 안 올림", "last": time.time()}
 
 
-def pipe(name):
-    """name 의 파이프라인을 올린다. 다른 게 올라 있으면 먼저 내린다(GPU 한 장에 둘 다는 안 들어감)."""
+def unload():
+    _cur.update(name=None, pipe=None, where="아직 안 올림"); free_cuda()
+
+
+def device_for(name):
+    """지금 여유 메모리가 가장 큰 GPU → (torch 장치, 표시용 글). 큰 모델이 들어갈 GPU 가 없으면 에러."""
+    if DEV:
+        return DEV, DEV
+    if not torch.cuda.is_available():
+        return "cpu", "CPU"
+    g = pick(NEED_MB[name])
+    if not g:
+        best = max((x["free"] for x in gpus()), default=0)
+        raise RuntimeError(f"GPU 여유 메모리 부족 — 약 {NEED_MB[name] // 1024}GB 필요, 가장 넉넉한 GPU 가 {best // 1024}GB. 잠시 뒤 다시 해 보세요")
+    return torch_device(g), label(g)
+
+
+def pipe(name, emit=lambda ev: None):
+    """name 의 파이프라인을 올린다. 다른 게 올라 있으면 먼저 내리고(GPU 한 장에 둘 다는 안 들어감), 그때 가장 한가한 GPU 를 새로 고른다."""
+    _cur["last"] = time.time()
     if _cur["name"] == name:
         return _cur["pipe"]
-    _cur["pipe"] = None; _cur["name"] = None; gc.collect(); torch.cuda.empty_cache()
+    unload()
+    dev, where = device_for(name)
+    print(f"[studio] {name} 모델 {where} 에서 로드", flush=True); emit({"stage": "load", "msg": f"{where} 에 모델 올리는 중"})
     if name == "image":
         from diffusers import QwenImagePipeline
-        p = QwenImagePipeline.from_pretrained(IMAGE_MODEL, torch_dtype=torch.bfloat16).to(DEV)
+        p = QwenImagePipeline.from_pretrained(IMAGE_MODEL, torch_dtype=torch.bfloat16).to(dev)
     elif name == "video":
         from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
         vae = AutoencoderKLWan.from_pretrained(VIDEO_MODEL, subfolder="vae", torch_dtype=torch.float32)
-        p = WanImageToVideoPipeline.from_pretrained(VIDEO_MODEL, vae=vae, torch_dtype=torch.bfloat16).to(DEV)
+        p = WanImageToVideoPipeline.from_pretrained(VIDEO_MODEL, vae=vae, torch_dtype=torch.bfloat16).to(dev)
     elif name == "face":
         import face_alignment
-        p = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device=DEV)
+        p = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device=dev)
     else:
         raise ValueError(name)
-    _cur.update(name=name, pipe=p)
+    _cur.update(name=name, pipe=p, dev=dev, where=where, last=time.time())
     return p
+
+
+def reaper():
+    """GPU_IDLE_UNLOAD_S 동안 안 쓰면 모델을 내려 VRAM 을 다른 도구에 돌려준다"""
+    while IDLE_S > 0:
+        time.sleep(30)
+        if _cur["name"] and time.time() - _cur["last"] > IDLE_S and LOCK.acquire(blocking=False):
+            try:
+                name = _cur["name"]; unload(); print(f"[studio] {name} 모델 내림 — {int(IDLE_S)}초 동안 안 씀", flush=True)
+            finally:
+                LOCK.release()
 
 
 def fit(im, w, h):
@@ -55,11 +90,11 @@ def fit(im, w, h):
 
 def imagine(q, emit):
     emit({"stage": "load", "msg": "그림 모델 준비 (처음엔 1~2분)"})
-    p = pipe("image")
+    p = pipe("image", emit)
     os.makedirs(q["out_dir"], exist_ok=True)
     paths = []
     for i in range(int(q.get("n", 4))):
-        g = torch.Generator(DEV).manual_seed(int(q.get("seed", 0)) + i)
+        g = torch.Generator(_cur["dev"]).manual_seed(int(q.get("seed", 0)) + i)
         im = p(prompt=q["prompt"], negative_prompt=q.get("negative") or " ", width=int(q["width"]), height=int(q["height"]),
                num_inference_steps=int(q.get("steps", 30)), true_cfg_scale=float(q.get("cfg", 4.0)), generator=g).images[0]
         path = os.path.join(q["out_dir"], f"cand_{i}.png"); im.save(path); paths.append(path)
@@ -70,14 +105,14 @@ def imagine(q, emit):
 def video(q, emit):
     from diffusers.utils import export_to_video
     emit({"stage": "load", "msg": "영상 모델 준비 (처음엔 1~2분)"})
-    p = pipe("video")
+    p = pipe("video", emit)
     w, h, steps = int(q["width"]), int(q["height"]), int(q.get("steps", 40))
     img = fit(Image.open(q["image"]).convert("RGB"), w, h)
 
     def cb(pp, i, t, kw):
         emit({"step": i + 1, "total": steps}); return kw
     frames = p(image=img, prompt=q["prompt"], negative_prompt=q.get("negative") or "", width=w, height=h, num_frames=int(q.get("frames", 121)),
-               guidance_scale=float(q.get("cfg", 5.0)), num_inference_steps=steps, generator=torch.Generator(DEV).manual_seed(int(q.get("seed", 0))),
+               guidance_scale=float(q.get("cfg", 5.0)), num_inference_steps=steps, generator=torch.Generator(_cur["dev"]).manual_seed(int(q.get("seed", 0))),
                callback_on_step_end=cb).frames[0]
     export_to_video(frames, q["out"], fps=24)
     return {"path": q["out"]}
@@ -97,7 +132,7 @@ class H(BaseHTTPRequestHandler):
     def log_message(self, *a): pass
 
     def do_GET(self):
-        b = json.dumps({"ok": True, "device": DEV, "loaded": _cur["name"]}).encode()
+        b = json.dumps({"ok": True, "device": _cur["where"], "loaded": _cur["name"]}, ensure_ascii=False).encode()
         self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(b))); self.end_headers(); self.wfile.write(b)
 
     def do_POST(self):
@@ -111,12 +146,13 @@ class H(BaseHTTPRequestHandler):
             return emit({"error": "not found"})
         with LOCK:  # GPU 작업은 한 번에 하나
             try:
-                emit({"done": fn(q, emit)})
+                emit({"done": fn(q, emit)}); _cur["last"] = time.time()
             except Exception as e:
                 traceback.print_exc()
                 emit({"error": f"{type(e).__name__}: {e}"[:600]})
 
 
 if __name__ == "__main__":
-    print(f"studio worker → 127.0.0.1:{PORT} device={DEV}", flush=True)
+    print(f"studio worker → 127.0.0.1:{PORT} device={DEV or '자동(모델 올릴 때마다 여유 많은 GPU)'}", flush=True)
+    threading.Thread(target=reaper, daemon=True).start()
     ThreadingHTTPServer(("127.0.0.1", PORT), H).serve_forever()

@@ -18,6 +18,7 @@ python3 app.py --cli photo.jpg voice.wav "대사" -o out.mp4 --ref-text "샘플�
 |---|---|---|
 | `PORT` | 8777 | |
 | `DEVICE` | cpu | `cuda` 권장. SadTalker 는 mps 미지원 → 맥은 cpu(256px 10초 영상에 수 분) |
+| GPU 고르기 | 자동 | 고정 번호 없음(`gpu_pick.py`): 목소리 합성·립싱크는 실행마다, 스튜디오 그림(Qwen-Image 약 60GB)·영상(Wan2.2 약 36GB)은 모델을 올릴 때마다 여유 메모리가 가장 큰 GPU. `GPU_POOL=2,3` 후보 제한, `GPU_IDLE_UNLOAD_S`(600) 동안 안 쓰면 스튜디오 모델을 내림, `STUDIO_DEVICE=cuda:1` 이면 고정 |
 | `TTS_BASE_URL` | 없음 | 목소리 샘플 없을 때 OpenAI 호환 TTS 서버(tts-local) |
 | `F5_MODEL` / `F5_CKPT` | F5TTS_v1_Base | F5-TTS 는 **영어·중국어** 학습. 한국어 복제는 한국어 파인튜닝 ckpt 를 `F5_CKPT` 로 주거나 CosyVoice2(Apache, ko 지원)로 교체 |
 | `WORKSPACE` | ./_workspace | 결과 폴더 |
