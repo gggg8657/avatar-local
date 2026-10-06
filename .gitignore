@@ -7,6 +7,5 @@ _workspace/
 __pycache__/
 .server.pid
 server.log
-models/
 studio.log
 .studio.pid

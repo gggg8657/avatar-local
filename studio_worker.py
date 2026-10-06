@@ -14,7 +14,7 @@ env: STUDIO_PORT(8787) STUDIO_DEVICE(비우면 자동 선택, cuda:1 처럼 주�
 import json, os, threading, time, traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from gpu_pick import IDLE_S, free_cuda, gpus, label, pick, torch_device  # torch 보다 먼저 (CUDA_DEVICE_ORDER)
+from gpu_pick import IDLE_S, free_cuda, gpus, label, pick, release, torch_device  # torch 보다 먼저 (CUDA_DEVICE_ORDER)
 import torch
 from PIL import Image
 
@@ -25,24 +25,26 @@ NEED_MB.update({k.strip(): int(v) for k, v in (x.split("=") for x in os.environ.
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "Qwen/Qwen-Image-2512")
 VIDEO_MODEL = os.environ.get("VIDEO_MODEL", "Wan-AI/Wan2.2-I2V-A14B-Diffusers")
 LOCK = threading.Lock()
-_cur = {"name": None, "pipe": None, "dev": "cpu", "where": "아직 안 올림", "last": time.time()}
+_cur = {"name": None, "pipe": None, "dev": "cpu", "where": "아직 안 올림", "last": time.time(), "g": None}
 
 
 def unload():
-    _cur.update(name=None, pipe=None, where="아직 안 올림"); free_cuda()
+    release(_cur["g"])  # 영상 모델이 잡아 둔 GPU 예약도 푼다
+    _cur.update(name=None, pipe=None, where="아직 안 올림", g=None); free_cuda()
 
 
 def device_for(name):
-    """지금 여유 메모리가 가장 큰 GPU → (torch 장치, 표시용 글). 큰 모델이 들어갈 GPU 가 없으면 에러."""
+    """지금 여유 메모리가 가장 큰 GPU → (torch 장치, 표시용 글, 예약 g). 큰 모델이 들어갈 GPU 가 없으면 에러.
+    영상은 CPU 오프로드라 돌 때만 GPU 메모리를 잡으므로 모델을 내릴 때까지 예약을 둔다(unload 가 풂). 나머지는 올린 뒤 바로 푼다."""
     if DEV:
-        return DEV, DEV
+        return DEV, DEV, None
     if not torch.cuda.is_available():
-        return "cpu", "CPU"
-    g = pick(NEED_MB[name])
+        return "cpu", "CPU", None
+    g = pick(NEED_MB[name], hold_s=86400 if name == "video" else None)
     if not g:
         best = max((x["free"] for x in gpus()), default=0)
         raise RuntimeError(f"GPU 여유 메모리 부족 — 약 {NEED_MB[name] // 1024}GB 필요, 가장 넉넉한 GPU 가 {best // 1024}GB. 잠시 뒤 다시 해 보세요")
-    return torch_device(g), label(g)
+    return torch_device(g), label(g), g
 
 
 def pipe(name, emit=lambda ev: None):
@@ -51,22 +53,26 @@ def pipe(name, emit=lambda ev: None):
     if _cur["name"] == name:
         return _cur["pipe"]
     unload()
-    dev, where = device_for(name)
+    dev, where, g = device_for(name)
     print(f"[studio] {name} 모델 {where} 에서 로드", flush=True); emit({"stage": "load", "msg": f"{where} 에 모델 올리는 중"})
-    if name == "image":
-        from diffusers import QwenImagePipeline
-        p = QwenImagePipeline.from_pretrained(IMAGE_MODEL, torch_dtype=torch.bfloat16).to(dev)
-    elif name == "video":
-        from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
-        vae = AutoencoderKLWan.from_pretrained(VIDEO_MODEL, subfolder="vae", torch_dtype=torch.float32)
-        p = WanImageToVideoPipeline.from_pretrained(VIDEO_MODEL, vae=vae, torch_dtype=torch.bfloat16)
-        p.enable_model_cpu_offload(device=dev)  # 전문가 둘(고노이즈·저노이즈, 각 14B)을 한 GPU 에 다 올리면 70GB+ → 쓰는 차례에만 GPU 로, 화질은 같음
-    elif name == "face":
-        import face_alignment
-        p = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device=dev)
-    else:
-        raise ValueError(name)
-    _cur.update(name=name, pipe=p, dev=dev, where=where, last=time.time())
+    try:
+        if name == "image":
+            from diffusers import QwenImagePipeline
+            p = QwenImagePipeline.from_pretrained(IMAGE_MODEL, torch_dtype=torch.bfloat16).to(dev)
+        elif name == "video":
+            from diffusers import AutoencoderKLWan, WanImageToVideoPipeline
+            vae = AutoencoderKLWan.from_pretrained(VIDEO_MODEL, subfolder="vae", torch_dtype=torch.float32)
+            p = WanImageToVideoPipeline.from_pretrained(VIDEO_MODEL, vae=vae, torch_dtype=torch.bfloat16)
+            p.enable_model_cpu_offload(device=dev)  # 전문가 둘(고노이즈·저노이즈, 각 14B)을 한 GPU 에 다 올리면 70GB+ → 쓰는 차례에만 GPU 로, 화질은 같음
+        elif name == "face":
+            import face_alignment
+            p = face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device=dev)
+        else:
+            raise ValueError(name)
+    except BaseException:
+        release(g); raise
+    if name != "video": release(g); g = None  # 가중치가 GPU 에 올라갔으니 nvidia-smi 에 보임 → 예약은 그만
+    _cur.update(name=name, pipe=p, dev=dev, where=where, last=time.time(), g=g)
     if dev.startswith("cuda"): torch.cuda.reset_peak_memory_stats(dev)  # VRAM 최고치(로그용)를 이 GPU 기준으로 다시 (가중치는 그대로 잡혀 있어 포함됨)
     return p
 

@@ -31,7 +31,7 @@
   .note{font-size:12px;color:var(--muted)}
   .note,.gal div,#status,#log,#stages,#meta{overflow-wrap:anywhere}
 </style>
-<h1>avatar local <small>— 내 얼굴·내 목소리 아바타 · 가상 캐릭터 스튜디오 (토이)</small></h1>
+<h1>avatar local <small>— 내 얼굴 아바타 · 가상 캐릭터 스튜디오 (토이)</small></h1>
 <div class="tabs"><button data-tab="studio" class="on">✨ 가상 캐릭터 만들기</button><button data-tab="mine">🙂 내 얼굴 아바타</button></div>
 
 <div id="tab-studio">
@@ -45,8 +45,7 @@
 <div class="acts" id="acts" hidden>
   <div class="box"><h3>🗣 말하게 하기 (립싱크)</h3><textarea id="stext" placeholder="캐릭터가 말할 대사"></textarea>
     <div style="margin:6px 0"><select id="squality"><option value="best" selected>최고 품질 — Wan2.2-S2V · 입·표정·상반신 (대사 5초마다 약 25분)</option><option value="fast">빠르게 — SadTalker · 얼굴만 (수십 초)</option></select></div>
-    <div class="note">목소리: 기본 TTS · 샘플을 넣으면 그 목소리로 <input type="file" id="svoice" accept=".wav,.mp3,.m4a,.webm,.ogg"></div>
-    <input type="text" id="sref" placeholder="샘플에서 말한 문장 (샘플 넣을 때)" style="margin-top:6px">
+    <div class="note">목소리는 TTS 도구(tts-local)의 한국어 목소리입니다.</div>
     <div style="margin-top:8px"><button id="speakGo" class="primary">말하게 하기</button></div>
     <div class="note">최고 품질은 음성에 맞춰 입·표정·고개·손까지 움직입니다(대사 5초마다 시간이 늘어남). 빠르게는 몸은 그대로 얼굴만 움직이고, 그림체(애니·웹툰)는 얼굴 인식이 안 될 수 있어요.</div></div>
   <div class="box"><h3>🏃 움직이게 하기 (동작 영상)</h3><textarea id="action" placeholder="예) 카메라를 보며 손을 흔들고 환하게 웃는다"></textarea>
@@ -62,16 +61,10 @@
 </div>
 
 <div id="tab-mine" hidden>
-<div class="consent"><label><input type="checkbox" id="consent"> 올리는 사진과 목소리는 <b>내 것이거나 명시적으로 동의한 사람의 것</b>입니다. 타인 얼굴을 바꿔 끼우는 용도로 쓰지 않습니다.</label></div>
-<div class="row">
-  <div class="box"><h3>1. 사진</h3><input type="file" id="photo" accept=".jpg,.jpeg,.png"><div><img class="prev" id="pprev" hidden></div></div>
-  <div class="box"><h3>2. 목소리 샘플 (10초쯤)</h3>
-    <input type="file" id="voice" accept=".wav,.mp3,.m4a,.webm,.ogg"> 또는 <button id="rec">● 녹음</button> <span id="rect"></span>
-    <audio id="vprev" controls hidden style="width:100%;margin-top:6px"></audio>
-    <input type="text" id="reftext" placeholder="샘플에서 말한 문장 그대로 (복제 정확도 ↑, 영어/중국어 모델 기준)" style="margin-top:6px">
-    <div id="status"></div></div>
-</div>
-<div class="box"><h3>3. 대사</h3><textarea id="text" placeholder="아바타가 말할 내용"></textarea>
+<div class="consent"><label><input type="checkbox" id="consent"> 올리는 사진은 <b>내 것이거나 명시적으로 동의한 사람의 것</b>입니다. 타인 얼굴을 바꿔 끼우는 용도로 쓰지 않습니다.</label></div>
+<div class="box"><h3>1. 사진</h3><input type="file" id="photo" accept=".jpg,.jpeg,.png"><div><img class="prev" id="pprev" hidden></div>
+  <div class="note">목소리는 TTS 도구(tts-local)의 한국어 목소리입니다(목소리 복제 기능은 없습니다).</div><div id="status"></div></div>
+<div class="box"><h3>2. 대사</h3><textarea id="text" placeholder="아바타가 말할 내용"></textarea>
   <div style="margin-top:8px"><button id="go" class="primary">생성</button> <span id="stages"></span></div><div id="log"></div></div>
 <div class="box" id="res" hidden><h3>결과</h3><video id="out" controls></video><div id="meta"></div></div>
 </div>
@@ -80,17 +73,8 @@
 <script>
 const $ = id => document.getElementById(id);
 const b64 = f => new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result.split(',')[1]); r.onerror = no; r.readAsDataURL(f); });
-fetch('api/status').then(r => r.json()).then(s => { $('status').textContent = `엔진: 립싱크 ${s.sadtalker ? '준비됨' : '없음'} · 목소리 복제 ${s.f5 ? '준비됨' : '없음'}${s.f5_korean ? '(한국어)' : s.f5 ? '(영·중만)' : ''} · TTS 서버 ${s.tts_server ? '연결' : '없음'} · ${s.device}`; });
+fetch('api/status').then(r => r.json()).then(s => { $('status').textContent = `엔진: 립싱크 ${s.sadtalker ? '준비됨' : '없음'} · 말하기 최고 품질 ${s.s2v ? '준비됨' : '없음'} · 목소리 ${s.tts_server ? 'TTS 도구 연결됨' : '없음 — TTS 도구(tts-local)를 켜 주세요'} · ${s.device}`; });
 $('photo').onchange = () => { const f = $('photo').files[0]; if (f) { $('pprev').src = URL.createObjectURL(f); $('pprev').hidden = false; } };
-let recBlob = null, mr = null;
-$('voice').onchange = () => { recBlob = null; const f = $('voice').files[0]; if (f) { $('vprev').src = URL.createObjectURL(f); $('vprev').hidden = false; } };
-$('rec').onclick = async () => {
-  if (mr && mr.state === 'recording') { mr.stop(); return; }
-  const st = await navigator.mediaDevices.getUserMedia({ audio: true }); const chunks = [];
-  mr = new MediaRecorder(st); mr.ondataavailable = e => chunks.push(e.data);
-  mr.onstop = () => { recBlob = new Blob(chunks, { type: mr.mimeType }); $('vprev').src = URL.createObjectURL(recBlob); $('vprev').hidden = false; $('rec').textContent = '● 녹음'; $('rect').textContent = '녹음됨'; st.getTracks().forEach(t => t.stop()); };
-  mr.start(); $('rec').textContent = '■ 정지'; let n = 0; const iv = setInterval(() => { $('rect').textContent = `${++n}초`; if (n >= 15 || mr.state !== 'recording') { clearInterval(iv); if (mr.state === 'recording') mr.stop(); } }, 1000);
-};
 // ── 갤러리 지우기: [선택] → 항목 클릭으로 고르기 → 선택 삭제, 또는 항목의 🗑. 서버는 .trash/<시각>/ 로 옮긴다 ──
 const SEL = new Set(); let selMode = false, deleting = false, lastBatch = null;
 function galSync() {
@@ -153,9 +137,7 @@ $('go').onclick = async () => {
   const f = $('photo').files[0]; if (!f) return alert('사진을 올리세요');
   if (!$('consent').checked) return alert('동의 확인이 필요합니다');
   $('go').disabled = true; $('res').hidden = true; $('stages').textContent = ''; $('log').textContent = '';
-  const body = { consent: true, text: $('text').value, ref_text: $('reftext').value, photo_name: f.name, photo_b64: await b64(f) };
-  const v = recBlob || $('voice').files[0];
-  if (v) { body.voice_name = recBlob ? 'rec.webm' : v.name; body.voice_b64 = await b64(v); }
+  const body = { consent: true, text: $('text').value, photo_name: f.name, photo_b64: await b64(f) };
   try {
     const r = await fetch('api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
@@ -222,9 +204,7 @@ async function act(btn, path, body, vid) {
 }
 $('speakGo').onclick = async () => {
   if (!$('stext').value.trim()) return alert('대사를 써 주세요');
-  const v = $('svoice').files[0], body = { text: $('stext').value, ref_text: $('sref').value, quality: $('squality').value };
-  if (v) { body.voice_name = v.name; body.voice_b64 = await b64(v); }
-  act($('speakGo'), 'api/speak', body);
+  act($('speakGo'), 'api/speak', { text: $('stext').value, quality: $('squality').value });
 };
 $('moveGo').onclick = () => { if (!$('action').value.trim()) return alert('어떻게 움직일지 써 주세요'); act($('moveGo'), 'api/move', { action: $('action').value, text: $('mtext').value, quality: $('mquality').value }); };
 $('toPersona').onclick = async () => {
