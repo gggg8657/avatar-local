@@ -11,12 +11,26 @@ command -v ffmpeg >/dev/null || die "ffmpeg 필요"
 PY=""; for c in python3.11 python3.10 python3.12 python3; do command -v $c >/dev/null && $c -c 'import sys;sys.exit(0 if (3,10)<=sys.version_info<(3,13) else 1)' 2>/dev/null && { PY=$c; break; }; done
 [ -n "$PY" ] || die "Python 3.10~3.12 필요"; ok "$($PY --version)"
 if [ ! -x venv/bin/python ]; then command -v uv >/dev/null && uv venv --python "$(command -v $PY)" venv -q || $PY -m venv venv; fi
-PIP_ARGS=(); [ -d wheels ] && PIP_ARGS=(--no-index --find-links wheels)
+# GPU 드라이버에 맞는 torch — PyPI 기본 torch 는 CUDA 13 빌드라 드라이버가 CUDA 12.x 면 GPU 를 못 쓴다(드라이버 570 = 12.8)
+TORCH_CU=""; TORCH_ARGS=()
+if command -v nvidia-smi >/dev/null 2>&1; then
+  _cu=$(nvidia-smi 2>/dev/null | sed -n 's/.*CUDA Version: \([0-9]*\)\.\([0-9]*\).*/\1\2/p' | head -1)
+  if [ -n "$_cu" ] && [ "$_cu" -lt 130 ]; then TORCH_CU=cu121; [ "$_cu" -ge 124 ] && TORCH_CU=cu124; [ "$_cu" -ge 126 ] && TORCH_CU=cu126
+    if command -v uv >/dev/null; then TORCH_ARGS=(--torch-backend "$TORCH_CU"); else TORCH_ARGS=(--extra-index-url "https://download.pytorch.org/whl/$TORCH_CU"); fi; fi
+fi
+torch_gpu_fix() {  # 이미 깔린 torch 가 GPU 를 못 잡으면 드라이버에 맞는 빌드로 다시 (폐쇄망 wheels 번들은 건드리지 않음)
+  local py=$1; shift; [ -n "$TORCH_CU" ] && [ ! -d wheels ] || return 0
+  "$py" -c "import torch,sys;sys.exit(0 if torch.cuda.is_available() else 1)" 2>/dev/null && return 0
+  echo "  · torch 를 GPU 드라이버에 맞는 $TORCH_CU 빌드로 다시 설치"
+  if command -v uv >/dev/null; then uv pip install -q -p "$py" --reinstall-package torch --torch-backend "$TORCH_CU" "$@"
+  else "$py" -m pip install -q --force-reinstall --no-deps --extra-index-url "https://download.pytorch.org/whl/$TORCH_CU" "$@"; fi
+}
+PIP_ARGS=(); [ -d wheels ] && PIP_ARGS=(--no-index --find-links wheels) || PIP_ARGS=("${TORCH_ARGS[@]}")
 venv/bin/python -c "import torch, face_alignment, f5_tts" 2>/dev/null || {
   echo "  · 의존성 설치 (torch·F5-TTS 포함, 수 분)"
   if command -v uv >/dev/null; then VIRTUAL_ENV=$PWD/venv uv pip install -q "${PIP_ARGS[@]}" torch torchaudio torchvision -r requirements.txt f5-tts
   else venv/bin/pip install -q "${PIP_ARGS[@]}" torch torchaudio torchvision -r requirements.txt f5-tts; fi
-}; ok "venv 준비"
+}; torch_gpu_fix venv/bin/python torch torchaudio torchvision; ok "venv 준비"
 mkdir -p shim/gfpgan; [ -f shim/sitecustomize.py ] || printf 'import numpy as _np\n_np.float, _np.int = float, int\n' > shim/sitecustomize.py; [ -f shim/gfpgan/__init__.py ] || printf 'class GFPGANer:  # ponytail: 얼굴 보정(gfpgan)은 안 씀 — basicsr 가 최신 torchvision 과 깨져서 스텁\n    pass\n' > shim/gfpgan/__init__.py
 if [ ! -f vendor/SadTalker/inference.py ]; then
   command -v git >/dev/null || die "git 필요 (또는 pack.sh 번들)"

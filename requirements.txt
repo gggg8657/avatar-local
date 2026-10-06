@@ -17,3 +17,4 @@ av
 safetensors
 opencv-python
 huggingface_hub
+pyarrow<21  # datasets 2.x 가 pa.PyExtensionType 을 씀(pyarrow 21 에서 제거)
