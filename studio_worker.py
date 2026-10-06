@@ -20,7 +20,8 @@ from PIL import Image
 
 PORT = int(os.environ.get("STUDIO_PORT", "8787"))
 DEV = os.environ.get("STUDIO_DEVICE", "")  # 비우면 모델 올릴 때마다 자동
-NEED_MB = {"image": 60000, "video": 36000, "face": 2000}  # 모델별로 GPU 에 필요한 여유(대략)
+NEED_MB = {"image": 60000, "video": 36000, "face": 2000}  # 모델별로 GPU 에 필요한 여유(MiB, 대략)
+NEED_MB.update({k.strip(): int(v) for k, v in (x.split("=") for x in os.environ.get("STUDIO_NEED_MB", "").split(",") if "=" in x)})  # 예: STUDIO_NEED_MB=image=70000,video=90000
 IMAGE_MODEL = os.environ.get("IMAGE_MODEL", "Qwen/Qwen-Image")
 VIDEO_MODEL = os.environ.get("VIDEO_MODEL", "Wan-AI/Wan2.2-TI2V-5B-Diffusers")
 LOCK = threading.Lock()
