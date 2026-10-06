@@ -19,4 +19,8 @@ opencv-python
 huggingface_hub
 pyarrow<21  # datasets 2.x 가 pa.PyExtensionType 을 씀(pyarrow 21 에서 제거)
 ftfy  # Wan 프롬프트 정리
-diffusers==0.35.2  # 가상 캐릭터 스튜디오: Qwen-Image(그림)·Wan2.2(그림→영상). 모델은 처음 쓸 때 받음(약 92GB)
+diffusers==0.37.0  # 가상 캐릭터 스튜디오: Qwen-Image-2512(그림)·Wan2.2 I2V-A14B(그림→영상). 모델은 처음 쓸 때 받음(약 185GB)
+decord  # 아래 셋은 vendor/Wan2.2(말하기 S2V-14B, 공식 코드)가 import
+easydict
+dashscope
+peft

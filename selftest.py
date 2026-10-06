@@ -64,6 +64,20 @@ try: urllib.request.urlopen(urllib.request.Request(U + "/api/runs/..%2f..%2fetc"
 except urllib.error.HTTPError as e: assert e.code == 404
 assert post("/api/runs/restore", {"batch": j["batch"]}) == (200, {"restored": [m2["run_id"]]})
 srv.shutdown()
+# 스튜디오 말하기 품질: best → Wan2.2-S2V(s2v), fast → SadTalker(lipsync). 영상 크기는 그림 비율·16의 배수
+import json as _j
+cid = "2026-01-02-c0de"; cd = os.path.join(app.WS, cid); os.makedirs(cd)
+subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=white:s=64x64:d=1", "-frames:v", "1", os.path.join(cd, "cand_0.png")], check=True)
+_j.dump({"run_id": cid, "kind": "character", "desc": "가상 인물", "shot": "half"}, open(os.path.join(cd, "meta.json"), "w"))
+called = []
+app.s2v = lambda photo, wav, out, prompt, emit: (called.append("s2v"), shutil.copy(fake_lipsync(photo, wav, cd, emit), out))
+app.lipsync = lambda *a, **k: (called.append("sadtalker"), fake_lipsync(*a[:4]))[1]
+assert app.speak(cid, 0, "안녕")["model"] == "Wan2.2-S2V-14B" and app.speak(cid, 0, "안녕", quality="fast")["model"] == "SadTalker" and called == ["s2v", "sadtalker"]
+assert os.path.exists(os.path.join(cd, "talk.mp4")) and _j.load(open(os.path.join(cd, "meta.json")))["talk"]["model"] == "SadTalker"
+for shot in app.SHOTS:
+    for area, *_ in app.MOVE_Q.values():
+        w, h = app.vsize(shot, area); W, H = app.SHOTS[shot][2]
+        assert w % 16 == 0 and h % 16 == 0 and w * h <= area and abs(w / h - W / H) < 0.03, (shot, w, h)
 shutil.rmtree(d); print("selftest OK")
 # 저작권 표기: 서버가 화면에 붙이는 코드가 있어야 한다 (LICENSE·NOTICE)
 _src = open(__import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "app.py"), encoding="utf-8").read()
