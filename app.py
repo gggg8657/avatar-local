@@ -131,7 +131,7 @@ def generate(photo, text, voice=None, ref_text="", consent=False, emit=lambda ev
 
 
 
-# ── 가상 캐릭터 스튜디오: 말로 묘사 → 그림(Qwen-Image) → 말하기(립싱크) / 움직이기(Wan2.2 그림→영상) / persona 로 ──────────
+# ── 가상 캐릭터 스튜디오: 말로 묘사 → 그림(Qwen-Image-2512) → 말하기(Wan2.2-S2V | 빠르게 SadTalker) / 움직이기(Wan2.2 I2V-A14B) / persona 로 ──
 # 실존 인물이 아닌 생성 캐릭터만 다룬다(사진 업로드 없음). 그래서 동의 체크 없이 쓰고, 실사 사진을 올리는 /api/run 은 그대로 동의를 받는다.
 STUDIO_URL = "http://127.0.0.1:" + os.environ.get("STUDIO_PORT", "8787")
 PERSONA_URL = os.environ.get("PERSONA_URL", "http://localhost:8776").rstrip("/")
@@ -146,11 +146,16 @@ STYLES = {  # 키: (이름, 그림 프롬프트에 붙는 스타일)
     "webtoon": ("웹툰", "Korean webtoon style, clean line art, flat soft shading"),
     "illust": ("일러스트", "digital painting illustration, painterly brushwork, soft palette"),
 }
-SHOTS = {  # 키: (이름, 구도, 그림 크기, 영상 크기)
-    "face": ("얼굴", "close-up head and shoulders portrait", (1024, 1024), (960, 960)),
-    "half": ("상반신", "upper body from the waist up", (1104, 1472), (704, 1280)),
-    "full": ("전신", "full body shot from head to toe, standing", (928, 1664), (704, 1280)),
+SHOTS = {  # 키: (이름, 구도, 그림 크기) — 영상 크기는 vsize() 가 그림 비율로
+    "face": ("얼굴", "close-up head and shoulders portrait", (1328, 1328)),  # 그림 크기는 Qwen-Image-2512 모델 카드 권장 비율
+    "half": ("상반신", "upper body from the waist up", (1104, 1472)),
+    "full": ("전신", "full body shot from head to toe, standing", (928, 1664)),
 }
+# 품질: (영상 넓이, 프레임, 단계) — Wan2.2 I2V-A14B 모델 카드: 81프레임(16fps, 5초)·40단계·guidance 3.5, 720p | 480p
+MOVE_Q = {"best": (720 * 1280, 81, 40), "fast": (480 * 832, 81, 30)}
+WAN = os.path.join(ROOT, "vendor", "Wan2.2")  # 공식 Wan2.2 코드(setup.sh 가 받음) — 말하기 최고 품질(S2V-14B 는 diffusers 에 아직 없음)
+S2V_MODEL = os.environ.get("S2V_MODEL", "Wan-AI/Wan2.2-S2V-14B")
+S2V_NEED_MB = 64000  # S2V 한 번에 GPU 에 필요한 여유(실측 최고 약 60GB, offload 켬)
 
 
 def llm_json(system, user):
@@ -213,7 +218,8 @@ def imagine(desc, style="real", shot="half", n=4, emit=lambda ev: None):
                   f"[묘사] {desc}\n[스타일] {STYLES[style][1]}\n[구도] {SHOTS[shot][1]}")
     prompt = f"{pr['prompt']}, {SHOTS[shot][1]}, {STYLES[style][1]}, Ultra HD, 4K"
     negative = (pr.get("negative") or "") + ", text, watermark, logo, extra fingers, deformed hands, cropped head, multiple people, blurry, " \
-        "nsfw, nude, nudity, nipples, lingerie, underwear, explicit, child, underage"  # 사내 포털 도구 — 노출·미성년 느낌은 어떤 묘사에도 막는다
+        "低分辨率，低画质，肢体畸形，手指畸形，人脸无细节，构图混乱，文字模糊，扭曲, " \
+        "nsfw, nude, nudity, nipples, lingerie, underwear, explicit, child, underage"  # 사내 포털 도구 — 노출·미성년 느낌은 어떤 묘사에도 막는다 (가운데는 Qwen-Image-2512 카드의 화질 negative)
     run_id = f"{datetime.date.today()}-{secrets.token_hex(2)}"; d = os.path.join(WS, run_id); os.makedirs(d)
     meta = {"run_id": run_id, "kind": "character", "desc": desc, "style": style, "shot": shot, "prompt": prompt, "negative": negative,
             "n": n, "ts": datetime.datetime.now().isoformat(timespec="seconds")}
@@ -231,8 +237,56 @@ def imagine(desc, style="real", shot="half", n=4, emit=lambda ev: None):
     return meta
 
 
-def speak(run_id, idx, text, voice=None, ref_text="", emit=lambda ev: None):
-    """고른 그림이 대사를 말하는 립싱크 영상 (상반신·전신은 얼굴만 움직임)"""
+def vsize(shot, area):
+    """그림 비율 그대로, 넓이 area 안에서 16 의 배수인 영상 크기 (w, h)"""
+    w, h = SHOTS[shot][2]; r = h / w
+    return int((area / r) ** .5) // 16 * 16, int((area * r) ** .5) // 16 * 16
+
+
+def s2v(photo, wav, out, prompt, emit):
+    """Wan2.2-S2V-14B 서브프로세스(공식 generate.py) — 그림 + 음성 → 얼굴·상반신이 말하는 mp4(16fps, 음성 포함). 5초 조각마다 H100 에서 약 23분."""
+    if not os.path.exists(os.path.join(WAN, "generate.py")):
+        raise RuntimeError("Wan2.2 코드가 없습니다 — bash setup.sh 로 vendor/Wan2.2 를 받으세요 (또는 '빠르게' 로)")
+    emit({"stage": "s2v", "msg": "말하기 모델 확인 (처음이면 약 49GB 받기)"})
+    ckpt = os.environ.get("S2V_CKPT") or subprocess.run([PY, "-c", f"from huggingface_hub import snapshot_download as s; print(s({S2V_MODEL!r}))"],
+                                                        capture_output=True, text=True).stdout.strip().split("\n")[-1]
+    if not os.path.isdir(ckpt):
+        raise RuntimeError(f"{S2V_MODEL} 를 받지 못했습니다 (S2V_CKPT 로 폴더 지정 가능)")
+    # S2V 는 5초(80프레임) 조각 단위로 만들고, 영상과 음성 중 짧은 쪽에 맞춰 자른다 → 말끝이 잘리지 않게 같은 조각 수 안에서 뒤에 무음을 덧댄다
+    dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", wav], capture_output=True, text=True).stdout or 0)
+    padded = os.path.splitext(out)[0] + "_s2v.wav"
+    ffmpeg("-i", wav, "-af", f"apad=whole_dur={min(dur + 0.6, (int(dur / 5) + 1) * 5 - 0.05):.3f}", padded)
+    cmd = [PY, "generate.py", "--task", "s2v-14B", "--size", "1024*704", "--ckpt_dir", ckpt, "--offload_model", "True", "--convert_model_dtype",
+           "--prompt", prompt, "--image", photo, "--audio", padded, "--save_file", out, "--base_seed", str(secrets.randbelow(10 ** 6))]
+    env = {**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONPATH": os.path.join(ROOT, "shim", "wan")}  # flash_attn 대역(SDPA) — nvcc 없이 빌드 불가
+    if DEVICE == "cuda":
+        g = pick(S2V_NEED_MB)
+        if not g: raise RuntimeError(f"GPU 여유 메모리 부족 — 약 {S2V_NEED_MB // 1024}GB 필요. 잠시 뒤 다시 하거나 '빠르게' 로")
+        env = env_for(g, env); emit({"log": f"말하기 영상 {label(g)} 에서 실행"})
+    p = subprocess.Popen(cmd, cwd=WAN, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    log, clip, last, gen = [], 1, 0, False
+    for line in p.stdout:  # tqdm 의 \r 도 줄바꿈으로 들어온다
+        line = line.strip()
+        if not line: continue
+        log.append(line); log = log[-40:]
+        gen = gen or "Generating video" in line  # 그 전의 진행 막대(가중치 읽기)는 단계로 치지 않는다
+        m = gen and re.search(r"(\d+)/(\d+) \[", line)
+        if m:
+            i, n = int(m.group(1)), int(m.group(2))
+            if i < last: clip += 1  # 대사가 길면 5초 단위 조각(clip)을 이어 만든다
+            if i != last: emit({"step": i, "total": n, "clip": clip}); last = i
+        else:
+            for k, msg in (("Creating WanS2V", "모델 올리는 중 (약 1분)"), ("Generating video", "영상 만드는 중 — 5초 조각마다 40단계"), ("Saving generated", "저장·음성 합치는 중")):
+                if k in line: emit({"log": msg})
+    p.wait()
+    if os.path.exists(padded): os.remove(padded)
+    if p.returncode or not os.path.exists(out):
+        raise RuntimeError("말하기 영상 실패:\n" + "\n".join(log[-8:]))
+    return out
+
+
+def speak(run_id, idx, text, voice=None, ref_text="", quality="best", emit=lambda ev: None):
+    """고른 그림이 대사를 말하는 영상. 최고 품질 = Wan2.2-S2V(얼굴·상반신·입모양, 5초마다 약 23분) / 빠르게 = SadTalker(얼굴만, 수십 초)"""
     d, meta = char_dir(run_id)
     if not text.strip(): raise ValueError("대사가 비었습니다")
     img = os.path.join(d, f"cand_{int(idx)}.png")
@@ -241,28 +295,35 @@ def speak(run_id, idx, text, voice=None, ref_text="", emit=lambda ev: None):
         ref = os.path.join(d, "ref.wav"); to_wav(voice, ref)
     emit({"stage": "tts", "msg": "목소리 합성 " + ("(목소리 복제)" if ref else "(TTS)")})
     wav = os.path.join(d, "talk.wav"); engine = tts(text, wav, ref, ref_text)
-    emit({"stage": "lipsync", "msg": "립싱크"})
-    mp4 = lipsync(img, wav, d, emit, full=meta["shot"] != "face")
-    out = os.path.join(d, "talk.mp4"); shutil.move(mp4, out)
+    out = os.path.join(d, "talk.mp4")
+    if quality == "fast":
+        emit({"stage": "lipsync", "msg": "립싱크 (빠르게 — 얼굴만)"})
+        mp4 = lipsync(img, wav, d, emit, full=meta["shot"] != "face"); shutil.move(mp4, out)
+    else:
+        emit({"stage": "s2v", "msg": "말하는 영상 (최고 품질 — 대사 5초마다 약 25분)"})
+        s2v(img, wav, out, f"{meta['desc']}. The person in the picture is talking to the camera, lips moving clearly with the speech, natural facial "
+                           "expressions and gentle head and hand movements, static camera, same face, clothes and background as the picture.", emit)
     for junk in [x for x in os.listdir(d) if os.path.isdir(os.path.join(d, x))]:
         shutil.rmtree(os.path.join(d, junk), ignore_errors=True)
-    meta.update(picked=int(idx), talk={"text": text, "engine": engine}); json.dump(meta, open(os.path.join(d, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False)
-    return {"run_id": run_id, "video": "talk.mp4", "engine": engine}
+    model = "SadTalker" if quality == "fast" else "Wan2.2-S2V-14B"
+    meta = char_dir(run_id)[1]  # 그동안 같은 캐릭터로 '움직이기' 가 끝났을 수 있어 다시 읽고 덧붙인다
+    meta.update(picked=int(idx), talk={"text": text, "engine": engine, "model": model}); json.dump(meta, open(os.path.join(d, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False)
+    return {"run_id": run_id, "video": "talk.mp4", "engine": engine, "model": model}
 
 
-def move(run_id, idx, action, text="", fast=False, emit=lambda ev: None):
-    """고른 그림이 동작하는 영상(Wan2.2). 대사가 있으면 목소리를 입힌다(입모양 동기는 아님)."""
+def move(run_id, idx, action, text="", quality="best", emit=lambda ev: None):
+    """고른 그림이 동작하는 5초 영상(Wan2.2 I2V-A14B, 최고 품질 720p | 빠르게 480p). 대사가 있으면 목소리를 입힌다(입모양 동기는 아님)."""
     d, meta = char_dir(run_id)
     if not action.strip(): raise ValueError("어떻게 움직일지 적어 주세요")
     emit({"stage": "prompt", "msg": "동작을 영상 프롬프트로"})
     pr = llm_json("You write prompts for an image-to-video model that animates a given picture. Output only JSON: {\"prompt\": \"...\"}. "
                   "English, 30-60 words: describe the motion of the person in the picture (body, hands, head, expression), camera mostly static, "
                   "keep identity, clothes and background unchanged, smooth natural movement.", f"[그림 속 인물] {meta['desc']}\n[동작] {action}")
-    w, h = SHOTS[meta["shot"]][3]
-    frames, steps = (73, 30) if fast else (121, 40)
-    emit({"stage": "video", "msg": f"동작 영상 ({'약 3초' if fast else '5초'}, 수 분)"})
+    quality = quality if quality in MOVE_Q else "best"
+    area, frames, steps = MOVE_Q[quality]; w, h = vsize(meta["shot"], area)
+    emit({"stage": "video", "msg": f"동작 영상 5초 ({w}×{h}, {'빠르게 — 약 7분' if quality == 'fast' else '최고 품질 — 약 30~35분'})"})
     out = os.path.join(d, "move_raw.mp4")
-    worker("/video", {"image": os.path.join(d, f"cand_{int(idx)}.png"), "prompt": pr["prompt"], "width": w, "height": h, "frames": frames, "steps": steps,
+    worker("/video", {"image": os.path.join(d, f"cand_{int(idx)}.png"), "prompt": pr["prompt"], "width": w, "height": h, "frames": frames, "steps": steps, "cfg": 3.5, "fps": 16,
                       "negative": "blurry, distorted face, extra limbs, deformed hands, flicker, static image, text, watermark", "out": out}, emit)
     final = os.path.join(d, "move.mp4")
     if text.strip():
@@ -275,7 +336,8 @@ def move(run_id, idx, action, text="", fast=False, emit=lambda ev: None):
             ffmpeg("-i", out, "-i", wav, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af", f"apad=whole_dur={dur(out):.3f}", "-c:a", "aac", final)
     else:
         shutil.copy(out, final)
-    meta.update(picked=int(idx), move={"action": action, "prompt": pr["prompt"], "text": text}); json.dump(meta, open(os.path.join(d, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False)
+    meta = char_dir(run_id)[1]  # 그동안 끝난 '말하기' 기록을 지우지 않게 다시 읽고 덧붙인다
+    meta.update(picked=int(idx), move={"action": action, "prompt": pr["prompt"], "text": text, "quality": quality, "model": "Wan2.2-I2V-A14B"}); json.dump(meta, open(os.path.join(d, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False)
     return {"run_id": run_id, "video": "move.mp4"}
 
 
@@ -343,7 +405,7 @@ def restore_trash(batch):
 def status():
     return {"sadtalker": os.path.exists(os.path.join(ROOT, "weights", "checkpoints", "SadTalker_V0.0.2_256.safetensors")) and os.path.exists(os.path.join(ST, "inference.py")),
             "f5": os.path.exists(os.path.join(ROOT, "venv", "bin", "f5-tts_infer-cli")), "tts_server": bool(TTS), "device": DEVICE,
-            "f5_korean": bool(F5_CKPT)}
+            "f5_korean": bool(F5_CKPT), "s2v": os.path.exists(os.path.join(WAN, "generate.py"))}
 
 
 HTML = open(os.path.join(ROOT, "ui.html"), encoding="utf-8").read()
@@ -409,9 +471,9 @@ class H(BaseHTTPRequestHandler):
                     up = os.path.join(WS, "_upload"); os.makedirs(up, exist_ok=True)
                     voice = os.path.join(up, secrets.token_hex(3) + "_" + re.sub(r"[^\w.\-]", "_", os.path.basename(req.get("voice_name") or "voice.wav")))
                     open(voice, "wb").write(base64.b64decode(req["voice_b64"]))
-                r = speak(req.get("run_id"), req.get("idx", 0), req.get("text") or "", voice, req.get("ref_text") or "", emit)
+                r = speak(req.get("run_id"), req.get("idx", 0), req.get("text") or "", voice, req.get("ref_text") or "", req.get("quality") or "best", emit)
             else:
-                r = move(req.get("run_id"), req.get("idx", 0), req.get("action") or "", req.get("text") or "", bool(req.get("fast")), emit)
+                r = move(req.get("run_id"), req.get("idx", 0), req.get("action") or "", req.get("text") or "", req.get("quality") or "best", emit)
             emit({"done": r})
         except Exception as e:
             emit({"error": f"{type(e).__name__}: {e}"})

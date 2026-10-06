@@ -6,6 +6,7 @@ IDX=(); [ "$V" = cpu ] && IDX=(--extra-index-url https://download.pytorch.org/wh
 venv/bin/pip download -q --platform manylinux2014_x86_64 --python-version 3.11 --only-binary=:all: -d "$S/wheels" "${IDX[@]}" torch torchaudio torchvision -r requirements.txt f5-tts
 cp -r app.py gpu_pick.py studio_worker.py ui.html selftest.py setup.sh requirements.txt README.md NOTICE LICENSE shim weights "$S/"
 git clone -q --depth 1 https://github.com/OpenTalker/SadTalker.git "$S/vendor/SadTalker"; rm -rf "$S/vendor/SadTalker/.git"
+cp -r vendor/Wan2.2 "$S/vendor/Wan2.2" && rm -rf "$S/vendor/Wan2.2/.git"  # 말하기 최고 품질 코드(setup.sh 의 WAN_COMMIT). 모델 가중치(HF 캐시 약 230GB)는 따로 반입
 # 첫 실행 때 받는 보조 모델: face_alignment(torch hub 캐시), facexlib(site-packages/facexlib/weights), F5-TTS(HF 캐시)
 mkdir -p "$S/cache"; cp -r ~/.cache/torch/hub/checkpoints "$S/cache/torch_hub" 2>/dev/null || true
 cp -r venv/lib/python3.11/site-packages/facexlib/weights "$S/cache/facexlib" 2>/dev/null || true

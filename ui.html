@@ -44,14 +44,15 @@
 <div class="box" id="candBox" hidden><h3>2. 마음에 드는 그림 고르기</h3><div class="cands" id="cands"></div></div>
 <div class="acts" id="acts" hidden>
   <div class="box"><h3>🗣 말하게 하기 (립싱크)</h3><textarea id="stext" placeholder="캐릭터가 말할 대사"></textarea>
+    <div style="margin:6px 0"><select id="squality"><option value="best" selected>최고 품질 — Wan2.2-S2V · 입·표정·상반신 (대사 5초마다 약 25분)</option><option value="fast">빠르게 — SadTalker · 얼굴만 (수십 초)</option></select></div>
     <div class="note">목소리: 기본 TTS · 샘플을 넣으면 그 목소리로 <input type="file" id="svoice" accept=".wav,.mp3,.m4a,.webm,.ogg"></div>
     <input type="text" id="sref" placeholder="샘플에서 말한 문장 (샘플 넣을 때)" style="margin-top:6px">
     <div style="margin-top:8px"><button id="speakGo" class="primary">말하게 하기</button></div>
-    <div class="note">상반신·전신 그림은 몸은 그대로, 얼굴만 움직입니다. 그림체(애니·웹툰)는 얼굴 인식이 안 될 수 있어요.</div></div>
+    <div class="note">최고 품질은 음성에 맞춰 입·표정·고개·손까지 움직입니다(대사 5초마다 시간이 늘어남). 빠르게는 몸은 그대로 얼굴만 움직이고, 그림체(애니·웹툰)는 얼굴 인식이 안 될 수 있어요.</div></div>
   <div class="box"><h3>🏃 움직이게 하기 (동작 영상)</h3><textarea id="action" placeholder="예) 카메라를 보며 손을 흔들고 환하게 웃는다"></textarea>
     <input type="text" id="mtext" placeholder="(선택) 영상에 입힐 대사 — 입모양은 맞지 않음">
-    <div style="margin-top:8px"><label class="note"><input type="checkbox" id="fast" checked> 빠르게(약 3초)</label> <button id="moveGo" class="primary">움직이게 하기</button></div>
-    <div class="note">그림 한 장으로 몸 전체가 움직이는 영상을 만듭니다(GPU 수 분).</div></div>
+    <div style="margin-top:8px"><select id="mquality"><option value="best" selected>최고 품질 — 720p 5초 (약 30~35분)</option><option value="fast">빠르게 — 480p 5초 (약 7분)</option></select> <button id="moveGo" class="primary">움직이게 하기</button></div>
+    <div class="note">그림 한 장으로 몸 전체가 움직이는 5초 영상을 만듭니다(Wan2.2 I2V-A14B).</div></div>
   <div class="box"><h3>💬 Persona 캐릭터로</h3><input type="text" id="pname" placeholder="이름 (예: 지우)">
     <textarea id="ppers" placeholder="성격·말투·관계 (예: 내 회사 동기, 털털하고 반말, 개발 얘기를 좋아함)" style="margin-top:6px;height:70px"></textarea>
     <div style="margin-top:8px"><button id="toPersona" class="primary">persona 에 추가</button> <span id="pmsg" class="note"></span></div>
@@ -141,7 +142,7 @@ async function loadGal() {
   const rs = await fetch('api/runs').then(r => r.json());
   const e = s => String(s || '').slice(0, 40).replace(/[<>&"]/g, '');
   $('gal').innerHTML = rs.map(r => { const content = r.kind === 'character'
-    ? `<div>${r.move ? `<video src="api/runs/${r.run_id}/move.mp4" controls></video>` : r.talk ? `<video src="api/runs/${r.run_id}/talk.mp4" controls></video>` : `<img src="api/runs/${r.run_id}/cand_${r.picked || 0}.png" style="width:180px;border-radius:8px">`}${r.ts.slice(0, 16)} · ✨<br>${e(r.desc)}</div>`
+    ? `<div>${r.talk ? `<video src="api/runs/${r.run_id}/talk.mp4" controls></video>` : ''}${r.move ? `<video src="api/runs/${r.run_id}/move.mp4" controls></video>` : ''}${r.move || r.talk ? '' : `<img src="api/runs/${r.run_id}/cand_${r.picked || 0}.png" style="width:180px;border-radius:8px">`}${r.ts.slice(0, 16)} · ✨<br>${e(r.desc)}</div>`
     : `<div><video src="api/runs/${r.run_id}/final.mp4" controls></video>${r.ts.slice(0, 16)} · ${r.engine}<br>${e(r.text)}</div>`;
     return `<div class="item" data-id="${e(r.run_id)}"><button class="del" title="지우기 (휴지통으로)" aria-label="지우기">🗑</button>${content}</div>`;
   }).join('') || '<span style="color:#999">아직 없음</span>';
@@ -183,7 +184,7 @@ fetch('api/studio').then(r => r.json()).then(s => {
   $('style').innerHTML = Object.entries(s.styles).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
   $('shot').innerHTML = Object.entries(s.shots).map(([k, v]) => `<option value="${k}" ${k === 'half' ? 'selected' : ''}>${v}</option>`).join('');
 });
-let CH = null, PICK = 0;
+let CH = null, PICK = 0, T0 = Date.now();
 async function sse(path, body, on) {
   const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '', done = null;
@@ -197,7 +198,7 @@ async function sse(path, body, on) {
   }
   return done;
 }
-const prog = ev => { if (ev.stage) $('sstages').textContent = ev.msg; if (ev.step) $('sstages').textContent = `영상 ${ev.step}/${ev.total} 단계`; if (ev.log) { $('slog').textContent += ev.log + '\n'; $('slog').scrollTop = 1e9; } };
+const prog = ev => { if (ev.stage) $('sstages').textContent = ev.msg; if (ev.step) $('sstages').textContent = `영상${ev.clip > 1 ? ` ${ev.clip}번째 5초` : ''} ${ev.step}/${ev.total} 단계 · ${Math.round((Date.now() - T0) / 1000)}초 지남`; if (ev.log) { $('slog').textContent += ev.log + '\n'; $('slog').scrollTop = 1e9; } };
 function pick(i) { PICK = i; document.querySelectorAll('#cands img').forEach((im, k) => im.classList.toggle('on', k === i)); $('acts').hidden = false; }
 $('draw').onclick = async () => {
   if (!$('desc').value.trim()) return alert('어떤 캐릭터인지 묘사해 주세요');
@@ -212,7 +213,7 @@ $('draw').onclick = async () => {
   $('draw').disabled = false;
 };
 async function act(btn, path, body, vid) {
-  if (!CH) return; btn.disabled = true; $('slog').textContent = '';
+  if (!CH) return; btn.disabled = true; $('slog').textContent = ''; T0 = Date.now();
   try {
     const r = await sse(path, { run_id: CH.run_id, idx: PICK, ...body }, prog);
     $('sout').src = `api/runs/${r.run_id}/${r.video}?${Date.now()}`; $('sres').hidden = false; $('sstages').textContent = '완료'; loadGal();
@@ -221,11 +222,11 @@ async function act(btn, path, body, vid) {
 }
 $('speakGo').onclick = async () => {
   if (!$('stext').value.trim()) return alert('대사를 써 주세요');
-  const v = $('svoice').files[0], body = { text: $('stext').value, ref_text: $('sref').value };
+  const v = $('svoice').files[0], body = { text: $('stext').value, ref_text: $('sref').value, quality: $('squality').value };
   if (v) { body.voice_name = v.name; body.voice_b64 = await b64(v); }
   act($('speakGo'), 'api/speak', body);
 };
-$('moveGo').onclick = () => { if (!$('action').value.trim()) return alert('어떻게 움직일지 써 주세요'); act($('moveGo'), 'api/move', { action: $('action').value, text: $('mtext').value, fast: $('fast').checked }); };
+$('moveGo').onclick = () => { if (!$('action').value.trim()) return alert('어떻게 움직일지 써 주세요'); act($('moveGo'), 'api/move', { action: $('action').value, text: $('mtext').value, quality: $('mquality').value }); };
 $('toPersona').onclick = async () => {
   if (!CH) return; $('toPersona').disabled = true; $('pmsg').textContent = '추가 중 (캐릭터 설정을 쓰는 중)…';
   try {
