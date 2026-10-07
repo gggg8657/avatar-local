@@ -52,7 +52,7 @@
     <input type="text" id="mtext" placeholder="(선택) 영상에 입힐 대사 — 입모양은 맞지 않음">
     <div style="margin-top:8px"><select id="mquality"><option value="best" selected>최고 품질 — 720p 5초 (약 30~35분)</option><option value="fast">빠르게 — 480p 5초 (약 7분)</option></select> <button id="moveGo" class="primary">움직이게 하기</button></div>
     <div class="note">그림 한 장으로 몸 전체가 움직이는 5초 영상을 만듭니다(Wan2.2 I2V-A14B).</div></div>
-  <div class="box"><h3>💬 Persona 캐릭터로</h3><input type="text" id="pname" placeholder="이름 (예: 지우)">
+  <div class="box" hidden><!-- persona-local 포털에서 숨김(2026-10-07) — 다시 보이면 hidden 제거 --><h3>💬 Persona 캐릭터로</h3><input type="text" id="pname" placeholder="이름 (예: 지우)">
     <textarea id="ppers" placeholder="성격·말투·관계 (예: 내 회사 동기, 털털하고 반말, 개발 얘기를 좋아함)" style="margin-top:6px;height:70px"></textarea>
     <div style="margin-top:8px"><button id="toPersona" class="primary">persona 에 추가</button> <span id="pmsg" class="note"></span></div>
     <div class="note">추가하면 Persona 에서 이 얼굴로 대화·음성·고화질 클립을 씁니다.</div></div>
