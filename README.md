@@ -3,6 +3,8 @@
 > **한 줄 요약** — 외모·복장을 말로 묘사하면 가상 캐릭터 그림을 만들고, 고른 그림으로 말하는 영상·움직이는 영상을 만드는 토이입니다. 본인 사진 한 장과 대사로 내 얼굴이 말하는 짧은 영상도 만듭니다.
 > 목소리는 TTS 도구(tts-local, MeloTTS, MIT)만 씁니다 — **목소리 복제 기능은 없습니다**(2026-10-06 라이선스 검토로 F5-TTS 제거). 전부 로컬.
 
+> ⚠️ 연구·내부 시험용 프로토타입입니다(배포·상업 서비스용 아님). 제3자 구성요소의 라이선스는 THIRD_PARTY_NOTICES.md 를 확인하세요.
+
 ![가상 캐릭터 만들기 화면 — 모드 전환, 캐릭터 설명, 말하기, 움직이기, Persona 등록](docs/img/studio.png)
 
 ## 무엇을 하나
@@ -86,15 +88,23 @@ python3 app.py --cli photo.jpg "대사" -o out.mp4
 
 ## 출처·감사 (Credits)
 
-- [SadTalker](https://github.com/OpenTalker/SadTalker) (Apache-2.0) — 립싱크. setup 때 `vendor/` 로 받아 쓰며 수정하지 않음(호환 패치는 `shim/`)
-- 목소리: 같은 포털의 tts-local 도구(MeloTTS, MIT)를 HTTP 로 호출 — 이 도구에 TTS 모델은 없음
-- 가상 캐릭터 스튜디오 (모델은 처음 쓸 때 받고 재배포하지 않음):
+전체 목록·버전·상업 이용 여부는 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), 저작권 표기는 `NOTICE` 를 보세요.
+
+- [SadTalker](https://github.com/OpenTalker/SadTalker) (Apache-2.0, Tencent) — 립싱크. setup 때 `vendor/` 로 받아 쓰며 수정하지 않음(호환 패치는 `shim/`). 가중치·얼굴 보조 모델(facexlib MIT, face_alignment BSD-3) 학습 데이터 조건은 확인 중 — [#1](https://github.com/gggg8657/avatar-local/issues/1)
+- 목소리: 같은 포털의 tts-local 도구(MeloTTS, MIT)를 HTTP 로 호출 — 이 도구에 TTS 모델·목소리 복제 없음(F5-TTS CC-BY-NC-4.0 제거 [#3](https://github.com/gggg8657/avatar-local/issues/3))
+- 가상 캐릭터 스튜디오 (모델은 처음 쓸 때 받고 재배포하지 않음, [#4](https://github.com/gggg8657/avatar-local/issues/4)):
   - 그림: [Qwen/Qwen-Image-2512](https://huggingface.co/Qwen/Qwen-Image-2512) (Apache-2.0) — [diffusers](https://github.com/huggingface/diffusers) (Apache-2.0) 로 실행
   - 움직이기: [Wan-AI/Wan2.2-I2V-A14B-Diffusers](https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B-Diffusers) (Apache-2.0)
   - 말하기(최고 품질): [Wan-AI/Wan2.2-S2V-14B](https://huggingface.co/Wan-AI/Wan2.2-S2V-14B) (Apache-2.0) — 공식 코드 [Wan-Video/Wan2.2](https://github.com/Wan-Video/Wan2.2) (Apache-2.0) 를 `vendor/` 로 받아 수정 없이 실행
   - 말하기(빠르게): 위 SadTalker 를 그대로 유지
-- face_alignment (BSD-3), facexlib (MIT), PyTorch/torchvision (BSD)
+- PyTorch/torchvision (BSD), ffmpeg(시스템, 외부 프로세스 — GPL 빌드·H.264 는 [#5](https://github.com/gggg8657/avatar-local/issues/5))
 - **LLM 실행** — OpenAI 호환 API 로 호출합니다(모델 가중치는 동봉하지 않음). 기본 배포는 [Ollama](https://github.com/ollama/ollama) (MIT) 위의 Google [Gemma](https://ai.google.dev/gemma) `gemma4:31b` — 모델 이용 조건은 Gemma 배포처 참고.
 - 이 도구는 [agent-page-portal](https://github.com/gggg8657/agent-page-portal) 에 연결해 쓰도록 만들었습니다(단독 실행도 됨).
 
-저작권 표기·전체 목록은 `NOTICE` 를 보세요.
+**얼굴·초상 정책**: 본인 또는 명시적으로 동의한 사람의 사진만 씁니다. 얼굴 바꿔 끼우기·목소리 복제는 없습니다. 실존 인물을 흉내 내는 영상은 만들지 마세요 — [#2](https://github.com/gggg8657/avatar-local/issues/2)
+
+**상업 이용 시**: '최고 품질'(Wan2.2, Apache-2.0) 경로만 쓰고 SadTalker·얼굴 보조 모델은 [#1](https://github.com/gggg8657/avatar-local/issues/1) 확인 뒤에. `pack.sh` 번들은 내부 반입용(외부 배포 금지).
+
+## 만든 사람
+
+DongJu Kim (gggg8657) — 설계·구현

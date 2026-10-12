@@ -1,21 +1,25 @@
 avatar-local
 ============
-Wraps (does not modify):
-  SadTalker — https://github.com/OpenTalker/SadTalker — Apache-2.0 (third-party components listed in its LICENSE), vendored at setup time into vendor/
-  Speech audio comes only from the separate tts-local tool (MeloTTS, MIT) over HTTP; no voice cloning and no TTS model is bundled.
-  diffusers — https://github.com/huggingface/diffusers — Apache-2.0; models (downloaded on first use, not redistributed):
-    Qwen/Qwen-Image-2512 — https://huggingface.co/Qwen/Qwen-Image-2512 — Apache-2.0 (character pictures)
-    Wan-AI/Wan2.2-I2V-A14B-Diffusers — https://huggingface.co/Wan-AI/Wan2.2-I2V-A14B-Diffusers — Apache-2.0 (picture → motion video)
-  Wan2.2 — https://github.com/Wan-Video/Wan2.2 — Apache-2.0, official inference code fetched at setup time into vendor/Wan2.2 (not modified),
-    runs Wan-AI/Wan2.2-S2V-14B — https://huggingface.co/Wan-AI/Wan2.2-S2V-14B — Apache-2.0 (speech → talking video, default "best quality")
-  SadTalker is kept as the "fast" talking mode.
-  face_alignment (BSD-3), facexlib (MIT, weights for detection/parsing), torch/torchvision (BSD)
-shim/gfpgan is a local stub so SadTalker imports without gfpgan/basicsr; no GFPGAN code is used.
-Files authored here (MIT): app.py studio_worker.py gpu_pick.py ui.html selftest.py setup.sh pack.sh README.md
+이 저장소의 원저작물(코드·UI·프롬프트·문서·도구 설계)은 DongJu Kim(gggg8657)이 작성했다.
+제3자 구성요소는 각자의 라이선스를 따르며 THIRD_PARTY_NOTICES.md 에 적었다.
+제3자 구성요소의 권리는 이 저장소의 라이선스로 바뀌지 않는다.
+
+연구·내부 시험용 프로토타입이다(배포·상업 서비스용 아님).
+
+Files authored here (MIT): app.py studio_worker.py gpu_pick.py ui.html selftest.py setup.sh pack.sh shim/ README.md
+
+Wraps (does not modify), fetched at setup time into vendor/ (not in this repository):
+  SadTalker — https://github.com/OpenTalker/SadTalker — Apache-2.0, Copyright (C) Tencent (licenses/SadTalker-Apache-2.0.txt)
+    "SadTalker" and "Tencent" names/logos belong to their owners; this project is not affiliated with Tencent.
+  Wan2.2 — https://github.com/Wan-Video/Wan2.2 — Apache-2.0 (licenses/Wan2.2-Apache-2.0.txt)
+Models downloaded on first use, not redistributed (Apache-2.0):
+  Qwen/Qwen-Image-2512, Wan-AI/Wan2.2-I2V-A14B-Diffusers, Wan-AI/Wan2.2-S2V-14B
+shim/gfpgan is a local stub so SadTalker imports without gfpgan/basicsr; no GFPGAN code or weights are used.
+Speech audio comes only from the separate tts-local tool (MeloTTS, MIT) over HTTP; no voice cloning and no TTS model is bundled.
+LLM (not bundled): OpenAI-compatible API; default deployment Ollama (MIT) serving Google Gemma (see Gemma's terms of use).
+Full list with licenses: THIRD_PARTY_NOTICES.md
+
 Usage rule: only your own or explicitly consented face; no face swap and no voice cloning is implemented.
 
-LLM (not bundled): called via an OpenAI-compatible API; default deployment is Ollama (https://github.com/ollama/ollama, MIT)
-  serving Google Gemma (gemma4:31b, https://ai.google.dev/gemma — see Gemma's terms of use).
-
-This package: Copyright (c) 2026 gggg8657 <dongjukim.dev@gmail.com>
+This package: Copyright (c) 2026 DongJu Kim (gggg8657) <gggg8657@gmail.com>
 화면 하단·메타데이터의 저작자 표기는 지우거나 바꾸지 마세요.
