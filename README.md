@@ -49,6 +49,9 @@ python3 app.py --cli photo.jpg "대사" -o out.mp4
 | `TTS_BASE_URL` | http://127.0.0.1:8771/v1 | 목소리 — OpenAI 호환 TTS 서버(tts-local). 유일한 목소리 경로라 꺼져 있으면 "TTS 도구(tts-local)를 켜 주세요" 오류 |
 | `TTS_VOICE` / `TTS_MODEL` | KR / melo | tts-local 목소리(지금은 KR 하나) |
 | `WORKSPACE` | ./_workspace | 결과 폴더 |
+| `BIND` | (모든 인터페이스) | 포털은 `127.0.0.1` 로 띄워 포털을 거쳐서만 열리게 함 |
+
+**사용자별 기록**: 갤러리·결과 영상·후보 그림·휴지통은 포털 접속자별로 따로 저장합니다(`WORKSPACE/u/<사용자>/`, 포털의 `X-Agent-User` 헤더 기준). 다른 사람의 항목 ID 를 알아도 열기·지우기·말하기·움직이기가 안 됩니다. 서버 주인(owner)·헤더 없는 단독 실행은 예전 `WORKSPACE` 그대로라 기존 기록이 그대로 보입니다. 그림·영상 작업 프로세스(127.0.0.1:8787)에는 요청할 때 그 사용자 폴더의 경로를 넘기고, "persona 로" 보낼 때도 사용자 헤더를 넘겨 persona-local 의 같은 사용자 폴더에 캐릭터가 생깁니다. 모델·가중치는 공유.
 
 ## 흐름
 사진 + 대사 → TTS 도구(tts-local) wav → SadTalker(still, crop, 256) → mp4.

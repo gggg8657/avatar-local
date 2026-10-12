@@ -75,13 +75,13 @@ def lipsync(photo, wav, d, emit, full=False):
     return out
 
 
-def generate(photo, text, consent=False, emit=lambda ev: None):
+def generate(photo, text, consent=False, emit=lambda ev: None, ws=WS):
     if not consent:
         raise ValueError("본인(또는 동의한 사람)의 얼굴임을 확인해야 합니다")
     if not text.strip():
         raise ValueError("대사가 비었습니다")
     run_id = f"{datetime.date.today()}-{secrets.token_hex(2)}"
-    d = os.path.join(WS, run_id)
+    d = os.path.join(ws, run_id)
     os.makedirs(d)
     shutil.copy(photo, os.path.join(d, "photo" + os.path.splitext(photo)[1].lower()))
     photo = os.path.join(d, "photo" + os.path.splitext(photo)[1].lower())
@@ -168,14 +168,15 @@ def worker(path, body, emit=lambda ev: None):
     raise RuntimeError("작업 프로세스 응답이 끊겼습니다")
 
 
-def char_dir(run_id):
-    if not re.fullmatch(RUN_RE, run_id or ""): raise ValueError("잘못된 ID")
-    d = os.path.join(WS, run_id); meta = json.load(open(os.path.join(d, "meta.json"), encoding="utf-8"))
+def char_dir(run_id, ws=WS):
+    d = run_path(run_id, ws)
+    if not os.path.isfile(os.path.join(d, "meta.json")): raise ValueError("없는 항목입니다")
+    meta = json.load(open(os.path.join(d, "meta.json"), encoding="utf-8"))
     if meta.get("kind") != "character": raise ValueError("가상 캐릭터가 아닙니다")
     return d, meta
 
 
-def imagine(desc, style="real", shot="half", n=4, emit=lambda ev: None):
+def imagine(desc, style="real", shot="half", n=4, emit=lambda ev: None, ws=WS):
     """묘사 → 후보 그림 n 장"""
     if not desc.strip(): raise ValueError("어떤 캐릭터인지 묘사해 주세요")
     style = style if style in STYLES else "real"; shot = shot if shot in SHOTS else "half"; n = max(1, min(int(n or 4), 6))
@@ -189,7 +190,7 @@ def imagine(desc, style="real", shot="half", n=4, emit=lambda ev: None):
     negative = (pr.get("negative") or "") + ", text, watermark, logo, extra fingers, deformed hands, cropped head, multiple people, blurry, " \
         "低分辨率，低画质，肢体畸形，手指畸形，人脸无细节，构图混乱，文字模糊，扭曲, " \
         "nsfw, nude, nudity, nipples, lingerie, underwear, explicit, child, underage"  # 사내 포털 도구 — 노출·미성년 느낌은 어떤 묘사에도 막는다 (가운데는 Qwen-Image-2512 카드의 화질 negative)
-    run_id = f"{datetime.date.today()}-{secrets.token_hex(2)}"; d = os.path.join(WS, run_id); os.makedirs(d)
+    run_id = f"{datetime.date.today()}-{secrets.token_hex(2)}"; d = os.path.join(ws, run_id); os.makedirs(d)
     meta = {"run_id": run_id, "kind": "character", "desc": desc, "style": style, "shot": shot, "prompt": prompt, "negative": negative,
             "n": n, "ts": datetime.datetime.now().isoformat(timespec="seconds")}
     json.dump(meta, open(os.path.join(d, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False)
@@ -259,9 +260,9 @@ def s2v(photo, wav, out, prompt, emit):
     return out
 
 
-def speak(run_id, idx, text, quality="best", emit=lambda ev: None):
+def speak(run_id, idx, text, quality="best", emit=lambda ev: None, ws=WS):
     """고른 그림이 대사를 말하는 영상. 최고 품질 = Wan2.2-S2V(얼굴·상반신·입모양, 5초마다 약 23분) / 빠르게 = SadTalker(얼굴만, 수십 초)"""
-    d, meta = char_dir(run_id)
+    d, meta = char_dir(run_id, ws)
     if not text.strip(): raise ValueError("대사가 비었습니다")
     img = os.path.join(d, f"cand_{int(idx)}.png")
     emit({"stage": "tts", "msg": "목소리 합성 (TTS 도구)"})
@@ -277,14 +278,14 @@ def speak(run_id, idx, text, quality="best", emit=lambda ev: None):
     for junk in [x for x in os.listdir(d) if os.path.isdir(os.path.join(d, x))]:
         shutil.rmtree(os.path.join(d, junk), ignore_errors=True)
     model = "SadTalker" if quality == "fast" else "Wan2.2-S2V-14B"
-    meta = char_dir(run_id)[1]  # 그동안 같은 캐릭터로 '움직이기' 가 끝났을 수 있어 다시 읽고 덧붙인다
+    meta = char_dir(run_id, ws)[1]  # 그동안 같은 캐릭터로 '움직이기' 가 끝났을 수 있어 다시 읽고 덧붙인다
     meta.update(picked=int(idx), talk={"text": text, "engine": engine, "model": model}); json.dump(meta, open(os.path.join(d, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False)
     return {"run_id": run_id, "video": "talk.mp4", "engine": engine, "model": model}
 
 
-def move(run_id, idx, action, text="", quality="best", emit=lambda ev: None):
+def move(run_id, idx, action, text="", quality="best", emit=lambda ev: None, ws=WS):
     """고른 그림이 동작하는 5초 영상(Wan2.2 I2V-A14B, 최고 품질 720p | 빠르게 480p). 대사가 있으면 목소리를 입힌다(입모양 동기는 아님)."""
-    d, meta = char_dir(run_id)
+    d, meta = char_dir(run_id, ws)
     if not action.strip(): raise ValueError("어떻게 움직일지 적어 주세요")
     emit({"stage": "prompt", "msg": "동작을 영상 프롬프트로"})
     pr = llm_json("You write prompts for an image-to-video model that animates a given picture. Output only JSON: {\"prompt\": \"...\"}. "
@@ -307,29 +308,30 @@ def move(run_id, idx, action, text="", quality="best", emit=lambda ev: None):
             ffmpeg("-i", out, "-i", wav, "-map", "0:v", "-map", "1:a", "-c:v", "copy", "-af", f"apad=whole_dur={dur(out):.3f}", "-c:a", "aac", final)
     else:
         shutil.copy(out, final)
-    meta = char_dir(run_id)[1]  # 그동안 끝난 '말하기' 기록을 지우지 않게 다시 읽고 덧붙인다
+    meta = char_dir(run_id, ws)[1]  # 그동안 끝난 '말하기' 기록을 지우지 않게 다시 읽고 덧붙인다
     meta.update(picked=int(idx), move={"action": action, "prompt": pr["prompt"], "text": text, "quality": quality, "model": "Wan2.2-I2V-A14B"}); json.dump(meta, open(os.path.join(d, "meta.json"), "w", encoding="utf-8"), ensure_ascii=False)
     return {"run_id": run_id, "video": "move.mp4"}
 
 
-def to_persona(run_id, idx, name, personality):
-    """고른 그림 + 성격 → persona-local 새 캐릭터 (입 위치도 자동)"""
-    d, meta = char_dir(run_id)
+def to_persona(run_id, idx, name, personality, ws=WS, user=None):
+    """고른 그림 + 성격 → persona-local 새 캐릭터 (입 위치도 자동). user 를 그대로 넘겨 persona 쪽도 같은 사용자 폴더에 저장"""
+    d, meta = char_dir(run_id, ws)
     if not name.strip(): raise ValueError("이름을 정해 주세요")
     img = os.path.join(d, f"cand_{int(idx)}.png")
     m = worker("/mouth", {"image": img}).get("mouth")
     body = {"name": name.strip(), "look": meta["desc"], "personality": personality.strip(), "mouth": m,
             "image_b64": base64.b64encode(open(img, "rb").read()).decode()}
     try:
-        with urllib.request.urlopen(urllib.request.Request(PERSONA_URL + "/api/persona_new", json.dumps(body).encode(), {"Content-Type": "application/json"}), timeout=600) as r:
+        with urllib.request.urlopen(urllib.request.Request(PERSONA_URL + "/api/persona_new", json.dumps(body).encode(), {"Content-Type": "application/json", **({"X-Agent-User": user} if user else {})}), timeout=600) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"persona 오류 {e.code}: {e.read().decode(errors='replace')[:300]}")
 
-def list_runs():
+def list_runs(ws=WS):
     out = []
-    for n in sorted(os.listdir(WS), key=lambda n: os.path.getmtime(os.path.join(WS, n)), reverse=True)[:50] if os.path.isdir(WS) else []:
-        p = os.path.join(WS, n, "meta.json")
+    names = [n for n in os.listdir(ws) if re.fullmatch(RUN_RE, n)] if os.path.isdir(ws) else []  # u/(다른 사용자)·.trash·_upload 는 빼고
+    for n in sorted(names, key=lambda n: os.path.getmtime(os.path.join(ws, n)), reverse=True)[:50]:
+        p = os.path.join(ws, n, "meta.json")
         if os.path.exists(p):
             m = json.load(open(p, encoding="utf-8"))
             if m.get("kind") == "character" and not (m.get("talk") or m.get("move")):
@@ -338,37 +340,37 @@ def list_runs():
     return out
 
 
-TRASH = os.path.join(WS, ".trash")  # 지운 항목은 .trash/<시각>/<run_id> 로 옮겨 둔다 (되살리기 가능)
+TRASH = os.path.join(WS, ".trash")  # 지운 항목은 <사용자 폴더>/.trash/<시각>/<run_id> 로 옮겨 둔다 (되살리기 가능). 이건 owner 것
 
 
-def run_path(run_id):
-    """run_id → WS 바로 아래 실제 폴더. 형식이 틀리거나 WS 밖(링크·../)이면 ValueError"""
+def run_path(run_id, ws=WS):
+    """run_id → 사용자 폴더(ws) 바로 아래 실제 폴더. 형식이 틀리거나 ws 밖(링크·../)이면 ValueError"""
     if not isinstance(run_id, str) or not re.fullmatch(RUN_RE, run_id): raise ValueError("잘못된 항목입니다")
-    d = os.path.join(WS, run_id)
-    if os.path.islink(d) or os.path.dirname(os.path.realpath(d)) != os.path.realpath(WS): raise ValueError("잘못된 항목입니다")
+    d = os.path.join(ws, run_id)
+    if os.path.islink(d) or os.path.dirname(os.path.realpath(d)) != os.path.realpath(ws): raise ValueError("잘못된 항목입니다")
     return d
 
 
-def trash_runs(ids):
+def trash_runs(ids, ws=WS):
     """갤러리 항목(폴더 통째로: 영상·음성·후보 그림·meta)을 휴지통으로. 한 번 지운 것들은 한 묶음(batch)"""
     if not isinstance(ids, list) or not ids or len(ids) > 200: raise ValueError("지울 항목을 고르세요")
-    paths = [run_path(i) for i in ids]  # 하나라도 틀리면 아무것도 옮기지 않는다
+    paths = [run_path(i, ws) for i in ids]  # 하나라도 틀리면 아무것도 옮기지 않는다
     batch = datetime.datetime.now().strftime("%Y%m%d-%H%M%S-") + secrets.token_hex(2)
-    dst = os.path.join(TRASH, batch); deleted, missing = [], []
+    dst = os.path.join(ws, ".trash", batch); deleted, missing = [], []
     for i, d in zip(ids, paths):
         if not os.path.isdir(d): missing.append(i); continue
         os.makedirs(dst, exist_ok=True); shutil.move(d, os.path.join(dst, i)); deleted.append(i)
     return {"deleted": deleted, "missing": missing, "batch": batch if deleted else None}
 
 
-def restore_trash(batch):
+def restore_trash(batch, ws=WS):
     if not isinstance(batch, str) or not re.fullmatch(r"\d{8}-\d{6}-[0-9a-f]{4}", batch): raise ValueError("잘못된 묶음입니다")
-    src = os.path.join(TRASH, batch)
+    src = os.path.join(ws, ".trash", batch)
     if not os.path.isdir(src): raise ValueError("휴지통에 없습니다")
     restored = []
     for i in sorted(os.listdir(src)):
-        if re.fullmatch(RUN_RE, i) and not os.path.exists(os.path.join(WS, i)):
-            shutil.move(os.path.join(src, i), os.path.join(WS, i)); restored.append(i)
+        if re.fullmatch(RUN_RE, i) and not os.path.exists(os.path.join(ws, i)):
+            shutil.move(os.path.join(src, i), os.path.join(ws, i)); restored.append(i)
     if not os.listdir(src): os.rmdir(src)
     return {"restored": restored}
 
@@ -402,6 +404,16 @@ def signed(html):
     return html
 
 
+def user_ws(h):
+    """포털이 넘긴 사용자별 작업 폴더. owner(서버 주인)·헤더 없음(단독 실행) = 예전 WORKSPACE 그대로"""
+    u = (h.headers.get("X-Agent-User") or "owner").strip()
+    if u == "owner":
+        return WS
+    d = os.path.join(WS, "u", re.sub(r"[^A-Za-z0-9_.-]", "_", u)[:64] or "_")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -415,13 +427,13 @@ class H(BaseHTTPRequestHandler):
         if p == "/api/status":
             return self._send(status())
         if p == "/api/runs":
-            return self._send(list_runs())
+            return self._send(list_runs(user_ws(self)))
         if p == "/api/studio":  # 스튜디오 선택지 (스타일·구도)
             return self._send({"styles": {k: v[0] for k, v in STYLES.items()}, "shots": {k: v[0] for k, v in SHOTS.items()}})
         m = re.fullmatch(rf"/api/runs/({RUN_RE})/(final\.mp4|talk\.mp4|move\.mp4|cand_\d\.png)", p)
         if m:
-            f = os.path.join(WS, m.group(1), m.group(2))
-            if os.path.exists(f):
+            f = os.path.join(user_ws(self), m.group(1), m.group(2))
+            if os.path.isfile(f) and os.path.realpath(f).startswith(os.path.realpath(user_ws(self)) + os.sep):
                 return self._send(open(f, "rb").read(), "image/png" if f.endswith(".png") else "video/mp4")
             return self._send({"error": "삭제됐거나 없는 파일입니다"}, code=404)
         self._send(signed(HTML).encode(), "text/html; charset=utf-8")
@@ -429,20 +441,22 @@ class H(BaseHTTPRequestHandler):
     def studio(self, req):
         if self.path == "/api/to_persona":
             try:
-                return self._send(to_persona(req.get("run_id"), req.get("idx", 0), req.get("name") or "", req.get("personality") or ""))
+                return self._send(to_persona(req.get("run_id"), req.get("idx", 0), req.get("name") or "", req.get("personality") or "",
+                                             user_ws(self), self.headers.get("X-Agent-User")))
             except Exception as e:
                 return self._send({"error": f"{type(e).__name__}: {e}"}, code=400)
         self.send_response(200); self.send_header("Content-Type", "text/event-stream; charset=utf-8"); self.send_header("Cache-Control", "no-cache"); self.end_headers()
 
         def emit(ev):
             self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()); self.wfile.flush()
+        ws = user_ws(self)  # 작업 경로는 요청 시점에 정해 GPU 워커로 넘긴다
         try:
             if self.path == "/api/imagine":
-                r = imagine(req.get("desc") or "", req.get("style") or "real", req.get("shot") or "half", req.get("n") or 4, emit)
+                r = imagine(req.get("desc") or "", req.get("style") or "real", req.get("shot") or "half", req.get("n") or 4, emit, ws)
             elif self.path == "/api/speak":
-                r = speak(req.get("run_id"), req.get("idx", 0), req.get("text") or "", req.get("quality") or "best", emit)
+                r = speak(req.get("run_id"), req.get("idx", 0), req.get("text") or "", req.get("quality") or "best", emit, ws)
             else:
-                r = move(req.get("run_id"), req.get("idx", 0), req.get("action") or "", req.get("text") or "", req.get("quality") or "best", emit)
+                r = move(req.get("run_id"), req.get("idx", 0), req.get("action") or "", req.get("text") or "", req.get("quality") or "best", emit, ws)
             emit({"done": r})
         except Exception as e:
             emit({"error": f"{type(e).__name__}: {e}"})
@@ -455,7 +469,7 @@ class H(BaseHTTPRequestHandler):
 
     def delete_runs(self, ids):
         try:
-            r = trash_runs(ids)
+            r = trash_runs(ids, user_ws(self))
         except ValueError as e:
             return self._send({"error": str(e)}, code=400)
         return self._send(r, code=200 if r["deleted"] else 404)
@@ -466,14 +480,15 @@ class H(BaseHTTPRequestHandler):
             return self.delete_runs(req.get("run_ids") or [req.get("run_id")])
         if self.path == "/api/runs/restore":  # {batch} → 그 삭제 묶음을 되살린다
             try:
-                return self._send(restore_trash(req.get("batch")))
+                return self._send(restore_trash(req.get("batch"), user_ws(self)))
             except ValueError as e:
                 return self._send({"error": str(e)}, code=400)
         if self.path in ("/api/imagine", "/api/speak", "/api/move", "/api/to_persona"):  # 가상 캐릭터 스튜디오
             return self.studio(req)
         if self.path != "/api/run":
             return self._send({"error": "not found"}, code=404)
-        up = os.path.join(WS, "_upload"); os.makedirs(up, exist_ok=True)
+        ws = user_ws(self)
+        up = os.path.join(ws, "_upload"); os.makedirs(up, exist_ok=True)
 
         def save(key, name_key, allowed):
             if not req.get(key):
@@ -494,7 +509,7 @@ class H(BaseHTTPRequestHandler):
             photo = save("photo_b64", "photo_name", (".jpg", ".jpeg", ".png"))
             if not photo:
                 raise ValueError("사진이 필요합니다")
-            emit({"done": generate(photo, req.get("text") or "", bool(req.get("consent")), emit)})
+            emit({"done": generate(photo, req.get("text") or "", bool(req.get("consent")), emit, ws)})
         except Exception as e:
             emit({"error": f"{type(e).__name__}: {e}"})
         finally:
@@ -512,4 +527,4 @@ if __name__ == "__main__":
         shutil.copy(os.path.join(WS, m["run_id"], "final.mp4"), out); print(out)
         sys.exit(0)
     print(f"avatar-local → http://localhost:{PORT}  {status()}  {_SIG}")
-    ThreadingHTTPServer(("", PORT), H).serve_forever()
+    ThreadingHTTPServer((os.environ.get("BIND", ""), PORT), H).serve_forever()

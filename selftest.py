@@ -68,6 +68,21 @@ except urllib.error.HTTPError as e: assert e.code == 404
 try: urllib.request.urlopen(urllib.request.Request(U + "/api/runs/..%2f..%2fetc", method="DELETE")); raise SystemExit("DELETE 경로 검사 실패")
 except urllib.error.HTTPError as e: assert e.code == 404
 assert post("/api/runs/restore", {"batch": j["batch"]}) == (200, {"restored": [m2["run_id"]]})
+# 사용자별 폴더(포털 X-Agent-User): alice 기록은 alice 폴더에만, bob 은 목록·열기·지우기 모두 못 함, owner 목록에 u/ 안 섞임
+def req(path, user, body=None):
+    r = urllib.request.Request(U + path, json.dumps(body).encode() if body is not None else None, {"Content-Type": "application/json", "X-Agent-User": user})
+    try:
+        with urllib.request.urlopen(r) as x: return x.status, x.read()
+    except urllib.error.HTTPError as e: return e.code, e.read()
+ma = app.generate(photo, "앨리스", consent=True, ws=os.path.join(app.WS, "u", "alice"))
+assert os.path.exists(os.path.join(app.WS, "u", "alice", ma["run_id"], "final.mp4"))
+assert [x["run_id"] for x in json.loads(req("/api/runs", "alice")[1])] == [ma["run_id"]] and json.loads(req("/api/runs", "bob")[1]) == []
+assert ma["run_id"] not in [x["run_id"] for x in app.list_runs()]
+assert req(f"/api/runs/{ma['run_id']}/final.mp4", "bob")[0] == 404 and req(f"/api/runs/{ma['run_id']}/final.mp4", "alice")[0] == 200
+assert req("/api/runs/delete", "bob", {"run_ids": [ma["run_id"]]})[0] == 404 and os.path.isdir(os.path.join(app.WS, "u", "alice", ma["run_id"]))
+assert req("/api/speak", "bob", {"run_id": ma["run_id"], "text": "x"})[1].count(b"error") == 1
+c, b = req("/api/runs/delete", "alice", {"run_ids": [ma["run_id"]]}); assert c == 200
+assert req("/api/runs/restore", "bob", {"batch": json.loads(b)["batch"]})[0] == 400 and req("/api/runs/restore", "alice", {"batch": json.loads(b)["batch"]})[0] == 200
 srv.shutdown()
 # 스튜디오 말하기 품질: best → Wan2.2-S2V(s2v), fast → SadTalker(lipsync). 영상 크기는 그림 비율·16의 배수
 import json as _j
