@@ -6,7 +6,7 @@ avatar-local
 
 연구·내부 시험용 프로토타입이다(배포·상업 서비스용 아님).
 
-Files authored here (MIT): app.py studio_worker.py gpu_pick.py ui.html selftest.py setup.sh pack.sh shim/ README.md
+Files authored here (PolyForm Noncommercial 1.0.0): app.py studio_worker.py gpu_pick.py ui.html selftest.py setup.sh pack.sh shim/ README.md
 
 Wraps (does not modify), fetched at setup time into vendor/ (not in this repository):
   SadTalker — https://github.com/OpenTalker/SadTalker — Apache-2.0, Copyright (C) Tencent (licenses/SadTalker-Apache-2.0.txt)
@@ -23,3 +23,15 @@ Usage rule: only your own or explicitly consented face; no face swap and no voic
 
 This package: Copyright (c) 2026 DongJu Kim (gggg8657) <dongjukim.dev@gmail.com>
 화면 하단·메타데이터의 저작자 표기는 지우거나 바꾸지 마세요.
+
+License / 라이선스 (2026-10-13 변경: MIT → PolyForm Noncommercial 1.0.0)
+  이 저장소의 원저작물은 PolyForm Noncommercial License 1.0.0 을 따른다 (LICENSE, SPDX: PolyForm-Noncommercial-1.0.0,
+  https://polyformproject.org/licenses/noncommercial/1.0.0/).
+  비상업 목적(개인 연구·학습·시험, 교육기관·공공 연구기관·정부기관·비영리 단체 등)의 사용·수정·재배포는 허용하며,
+  상업적 이용은 저작자의 별도 허락이 필요하다.
+  이전 버전: 커밋 d314d6a 까지(2026-10-13 이전)의 버전을 MIT 로 받아 간 사본에는 MIT 가 계속 적용된다. 변경은 이후 버전에만 적용된다.
+  제3자 구성요소(동봉 파일·설치 의존성·모델·데이터)는 각자의 원래 라이선스를 그대로 따르며 이 변경의 영향을 받지 않는다
+  (THIRD_PARTY_NOTICES.md).
+  연구·내부 시험용 프로토타입이며 배포·상업 서비스용이 아니다.
+
+Required Notice: Copyright 2026 DongJu Kim (gggg8657)

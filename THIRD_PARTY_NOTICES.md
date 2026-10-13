@@ -1,6 +1,6 @@
 # 제3자 구성요소 고지 (THIRD_PARTY_NOTICES)
 
-avatar-local 의 원저작물(코드·UI·프롬프트·문서)은 DongJu Kim (gggg8657) 이 작성했고 MIT 라이선스입니다(`LICENSE`, `NOTICE`).
+avatar-local 의 원저작물(코드·UI·프롬프트·문서)은 DongJu Kim (gggg8657) 이 작성했고 PolyForm Noncommercial 1.0.0 라이선스입니다(`LICENSE`, `NOTICE`).
 아래 제3자 구성요소는 **각자의 라이선스**를 따르며 이 저장소의 라이선스로 바뀌지 않습니다.
 조사일 2026-10-12 · 1차 출처(설치된 패키지 메타데이터, vendor 의 LICENSE 파일, HF API `cardData.license`, GitHub LICENSE)로 확인. 법률 판단이 아니며, 상업 이용 전에는 원문을 다시 확인하세요.
 
@@ -66,7 +66,7 @@ avatar-local 의 원저작물(코드·UI·프롬프트·문서)은 DongJu Kim (g
 | 이름 | 쓰임 | 라이선스 | 상업 이용 | 비고 |
 |---|---|---|---|---|
 | ffmpeg (시스템) | 영상·음성 합치기, H.264 인코딩 | LGPL/GPL (이 서버 빌드는 `--enable-gpl`) | 조건부 | 별도 프로세스로 실행만 함. H.264 특허 · [#5](https://github.com/gggg8657/avatar-local/issues/5) |
-| tts-local (MeloTTS, MIT) | 목소리 — 포털의 다른 도구를 HTTP 로 호출 | MIT | 가능 | 이 도구에 TTS 모델 없음, 목소리 복제 없음 |
+| tts-local (MeloTTS, MIT) | 목소리 — 포털의 다른 도구를 HTTP 로 호출 | tts-local 코드 PolyForm Noncommercial 1.0.0(같은 저작자) · MeloTTS MIT | 비상업만 | 이 도구에 TTS 모델 없음, 목소리 복제 없음 |
 | LLM (OpenAI 호환 API) | 그림·동작 프롬프트 다듬기 | 모델마다 다름 | 확인 | 코드 기본값 `qwen3:8b`(Qwen3, Apache-2.0), 포털 기본 배포 Ollama(MIT) + Google Gemma `gemma4:31b`(Gemma 이용약관) |
 | persona-local | 만든 캐릭터를 넘겨 등록 | 별도 저장소 | — | 그 도구의 모델(예: Realistic Vision, CreativeML OpenRAIL-M)은 이 도구가 쓰지 않음 — persona-local 의 THIRD_PARTY_NOTICES 참고 |
 
