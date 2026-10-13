@@ -109,6 +109,7 @@ PERSONA_URL = os.environ.get("PERSONA_URL", "http://localhost:8776").rstrip("/")
 LLM_API = os.environ.get("LLM_API", "ollama")
 LLM_BASE = os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1" if LLM_API == "openai" else "http://localhost:11434").rstrip("/")
 LLM_MODEL = os.environ.get("LLM_MODEL", "qwen3:8b")
+LLM_KEY = os.environ.get("LLM_API_KEY", "")
 STYLES = {  # 키: (이름, 그림 프롬프트에 붙는 스타일)
     "real": ("실사", "photorealistic RAW photo, natural skin texture, soft daylight, 85mm lens"),
     "virtual": ("버추얼 휴먼", "flawless virtual human, AI influencer look, perfectly symmetrical face, porcelain smooth skin, glossy studio lighting, hyperreal CGI"),
@@ -133,12 +134,13 @@ def llm_json(system, user):
     """작은 LLM 호출 → JSON (그림·동작 프롬프트 만들기, persona 설정 쓰기)"""
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     if LLM_API == "openai":
-        url, body = LLM_BASE + "/chat/completions", {"model": LLM_MODEL, "messages": msgs, "temperature": 0.4}
+        url, body = LLM_BASE + "/chat/completions", {"model": LLM_MODEL, "messages": msgs, "temperature": 0.4, "response_format": {"type": "json_object"}}  # vLLM 은 이걸 줘야 JSON 만 냄
     else:
-        url, body = LLM_BASE + "/api/chat", {"model": LLM_MODEL, "messages": msgs, "stream": False, "think": False, "options": {"temperature": 0.4}}
-    with urllib.request.urlopen(urllib.request.Request(url, json.dumps(body).encode(), {"Content-Type": "application/json"}), timeout=300) as r:
+        url, body = LLM_BASE + "/api/chat", {"model": LLM_MODEL, "messages": msgs, "stream": False, "think": False, "format": "json", "options": {"temperature": 0.4}}
+    hdr = {"Content-Type": "application/json", **({"Authorization": "Bearer " + LLM_KEY} if LLM_KEY else {})}
+    with urllib.request.urlopen(urllib.request.Request(url, json.dumps(body).encode(), hdr), timeout=300) as r:
         j = json.load(r)
-    out = j["choices"][0]["message"]["content"] if LLM_API == "openai" else j["message"]["content"]
+    out = (j["choices"][0]["message"] if LLM_API == "openai" else j["message"]).get("content") or ""   # vLLM 은 빈 응답에 null
     m = re.search(r"\{.*\}", re.sub(r"<think>.*?</think>", "", out, flags=re.S), re.S)
     if not m:
         raise RuntimeError("LLM 이 JSON 을 쓰지 못했습니다: " + out[:200])
