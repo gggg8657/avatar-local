@@ -141,6 +141,7 @@ $('go').onclick = async () => {
   const body = { consent: true, text: $('text').value, photo_name: f.name, photo_b64: await b64(f) };
   try {
     const r = await fetch('api/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);  // 413(사진이 너무 큼) 등
     const reader = r.body.getReader(), dec = new TextDecoder(); let buf = '';
     while (true) {
       const { value, done } = await reader.read(); if (done) break;

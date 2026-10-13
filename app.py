@@ -18,6 +18,8 @@ WS = os.environ.get("WORKSPACE") or os.path.join(ROOT, "_workspace")  # 포털�
 ST = os.path.join(ROOT, "vendor", "SadTalker")
 PY = os.path.join(ROOT, "venv", "bin", "python")
 PORT = int(os.environ.get("PORT", "8777"))
+MAX_PHOTO = 20 * 2**20  # 올리는 사진 상한
+MAX_BODY = MAX_PHOTO * 4 // 3 + 2**20  # 요청 본문 상한(사진을 base64 로 + 대사)
 DEVICE = os.environ.get("DEVICE", "cpu")
 TTS = (os.environ.get("TTS_BASE_URL") or "http://127.0.0.1:8771/v1").rstrip("/")
 TTS_VOICE = os.environ.get("TTS_VOICE", "KR")
@@ -475,7 +477,19 @@ class H(BaseHTTPRequestHandler):
         return self._send(r, code=200 if r["deleted"] else 404)
 
     def do_POST(self):
-        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return self._send({"error": "잘못된 요청"}, code=400)
+        if n > MAX_BODY:
+            self.close_connection = True
+            while n > 0 and self.rfile.read(min(n, 1 << 20)):  # 본문을 버려 읽어야 포털(프록시)이 502 대신 413 을 받는다
+                n -= 1 << 20
+            return self._send({"error": f"요청이 너무 큽니다 (사진 {MAX_PHOTO // 2**20}MB 이하)"}, code=413)
+        try:
+            req = json.loads(self.rfile.read(n) or b"{}")
+        except ValueError:
+            return self._send({"error": "잘못된 요청(JSON)"}, code=400)
         if self.path == "/api/runs/delete":  # {run_ids:[…]} (또는 run_id 하나) → 휴지통으로
             return self.delete_runs(req.get("run_ids") or [req.get("run_id")])
         if self.path == "/api/runs/restore":  # {batch} → 그 삭제 묶음을 되살린다
