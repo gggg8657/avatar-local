@@ -490,6 +490,8 @@ class H(BaseHTTPRequestHandler):
             req = json.loads(self.rfile.read(n) or b"{}")
         except ValueError:
             return self._send({"error": "잘못된 요청(JSON)"}, code=400)
+        if not isinstance(req, dict):
+            return self._send({"error": "요청 본문은 JSON 객체여야 합니다"}, code=400)
         if self.path == "/api/runs/delete":  # {run_ids:[…]} (또는 run_id 하나) → 휴지통으로
             return self.delete_runs(req.get("run_ids") or [req.get("run_id")])
         if self.path == "/api/runs/restore":  # {batch} → 그 삭제 묶음을 되살린다
