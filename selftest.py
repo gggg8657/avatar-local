@@ -2,6 +2,7 @@
 """LLM·모델 없이 파이프라인만: 가짜 TTS(사인파) + 가짜 립싱크(ffmpeg 색상 소스) → 동의 게이트·산출물·목록·상대경로.  python3 selftest.py"""
 import os, shutil, subprocess, tempfile, wave, struct, math
 os.environ["WORKSPACE"] = tempfile.mkdtemp()
+for _k in ("PORTAL_JOBS_URL", "PORTAL_JOBS_TOKEN", "PORTAL_JOBS_TOOL"): os.environ.pop(_k, None)   # setup.sh 가 포털 환경에서 돌려도 시험 작업을 진짜 🔔 로 보내지 않게
 import app
 
 def fake_tts(text, out_wav):
