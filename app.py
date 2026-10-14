@@ -10,6 +10,7 @@ env: PORT(8777) DEVICE(cpu|cuda, 기본 cpu — SadTalker 는 mps 미지원)
      TTS_BASE_URL(OpenAI 호환 /v1, 기본 tts-local http://127.0.0.1:8771/v1) TTS_VOICE(KR) TTS_MODEL(melo)"""
 import base64, datetime, json, os, re, secrets, shutil, subprocess, sys, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import portal_auth  # 포털 서명 확인 관문·오류 문장 정리(원본 agent-page-portal/sdk/portal_auth.py)
 
 from gpu_pick import env_for, label, pick, pool_env, release
 import portal_jobs  # 포털 작업 알림(🔔) — 포털 밖이면 아무 일도 안 함
@@ -35,7 +36,7 @@ def ffmpeg(*a):
 def tts(text, out_wav):
     """대사 → wav. TTS 도구(tts-local, OpenAI 호환 /v1/audio/speech)만 쓴다 — 목소리 복제 없음(라이선스)."""
     req = urllib.request.Request(TTS + "/audio/speech", json.dumps({"model": TTS_MODEL, "input": text, "voice": TTS_VOICE, "response_format": "wav"}).encode(),
-                                 {"Content-Type": "application/json"})
+                                 {"Content-Type": "application/json", **portal_auth.sign("_service")})
     try:
         with urllib.request.urlopen(req, timeout=600) as r, open(out_wav, "wb") as f:
             f.write(r.read())
@@ -332,7 +333,7 @@ def to_persona(run_id, idx, name, personality, ws=WS, user=None):
     body = {"name": name.strip(), "look": meta["desc"], "personality": personality.strip(), "mouth": m,
             "image_b64": base64.b64encode(open(img, "rb").read()).decode()}
     try:
-        with urllib.request.urlopen(urllib.request.Request(PERSONA_URL + "/api/persona_new", json.dumps(body).encode(), {"Content-Type": "application/json", **({"X-Agent-User": user} if user else {})}), timeout=600) as r:
+        with urllib.request.urlopen(urllib.request.Request(PERSONA_URL + "/api/persona_new", json.dumps(body).encode(), {"Content-Type": "application/json", **portal_auth.sign(user)}), timeout=600) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"persona 오류 {e.code}: {e.read().decode(errors='replace')[:300]}")
@@ -387,7 +388,7 @@ def restore_trash(batch, ws=WS):
 
 def status():
     try:  # TTS 도구가 켜져 있는지 (목소리는 이것만 씀)
-        urllib.request.urlopen(TTS + "/models", timeout=2); tts_up = True
+        urllib.request.urlopen(urllib.request.Request(TTS + "/models", headers=portal_auth.sign("_service")), timeout=2); tts_up = True
     except Exception:
         tts_up = False
     return {"sadtalker": os.path.exists(os.path.join(ROOT, "weights", "checkpoints", "SadTalker_V0.0.2_256.safetensors")) and os.path.exists(os.path.join(ST, "inference.py")),
@@ -460,6 +461,8 @@ class H(BaseHTTPRequestHandler):
             if os.path.isfile(f) and os.path.realpath(f).startswith(os.path.realpath(user_ws(self)) + os.sep):
                 return self._send(open(f, "rb").read(), "image/png" if f.endswith(".png") else "video/mp4")
             return self._send({"error": "삭제됐거나 없는 파일입니다"}, code=404)
+        if self.path.split("?")[0].startswith("/api/"):   # 없는 API 경로는 화면 대신 JSON 404
+            return self._send({"error": "not found"}, code=404)
         self._send(signed(HTML).encode(), "text/html; charset=utf-8")
 
     def studio(self, req):
@@ -468,7 +471,7 @@ class H(BaseHTTPRequestHandler):
                 return self._send(to_persona(req.get("run_id"), req.get("idx", 0), req.get("name") or "", req.get("personality") or "",
                                              user_ws(self), self.headers.get("X-Agent-User")))
             except Exception as e:
-                return self._send({"error": f"{type(e).__name__}: {e}"}, code=400)
+                return self._send({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")}, code=400)
         self.send_response(200); self.send_header("Content-Type", "text/event-stream; charset=utf-8"); self.send_header("Cache-Control", "no-cache"); self.end_headers()
 
         def emit(ev):
@@ -491,7 +494,7 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             if not noted:  # 다 만든 뒤 브라우저가 끊긴 경우는 '완료' 그대로
                 portal_jobs.notify(user, "failed", id=jid, title=title, link=f"/?run={rid}" if rid else "/", message=job_msg(e))
-            emit({"error": f"{type(e).__name__}: {e}"})
+            emit({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")})
 
     def do_DELETE(self):
         m = re.fullmatch(rf"/api/runs/({RUN_RE})", self.path)
@@ -563,7 +566,7 @@ class H(BaseHTTPRequestHandler):
         except Exception as e:
             if not noted:
                 portal_jobs.notify(user, "failed", id=jid, title="내 얼굴 아바타", link="/", message=job_msg(e))
-            emit({"error": f"{type(e).__name__}: {e}"})
+            emit({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")})
         finally:
             if photo and os.path.exists(photo):
                 os.remove(photo)
@@ -579,4 +582,4 @@ if __name__ == "__main__":
         shutil.copy(os.path.join(WS, m["run_id"], "final.mp4"), out); print(out)
         sys.exit(0)
     print(f"avatar-local → http://localhost:{PORT}  {status()}  {_SIG}")
-    ThreadingHTTPServer((os.environ.get("BIND", "127.0.0.1"), PORT), __import__("portal_auth").install(H, "avatar-local")).serve_forever()
+    ThreadingHTTPServer((os.environ.get("BIND", "127.0.0.1"), PORT), portal_auth.install(H, "avatar-local")).serve_forever()
