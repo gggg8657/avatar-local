@@ -209,6 +209,18 @@ $('speakGo').onclick = async () => {
   act($('speakGo'), 'api/speak', { text: $('stext').value, quality: $('squality').value });
 };
 $('moveGo').onclick = () => { if (!$('action').value.trim()) return alert('어떻게 움직일지 써 주세요'); act($('moveGo'), 'api/move', { action: $('action').value, text: $('mtext').value, quality: $('mquality').value }); };
+// 포털 알림(🔔)에서 ?run=<ID> 로 열면 그 결과를 연다 — 캐릭터는 스튜디오(후보·영상), 내 얼굴은 결과 영상
+(async () => {
+  const id = new URLSearchParams(location.search).get('run'); if (!/^\d{4}-\d{2}-\d{2}-[0-9a-f]{4}$/.test(id || '')) return;
+  const m = await fetch(`api/runs/${id}`).then(r => r.ok ? r.json() : null).catch(() => null); if (!m) return;
+  const tab = m.kind === 'character' ? 'studio' : 'mine'; document.querySelector(`.tabs button[data-tab="${tab}"]`).click();
+  if (m.kind !== 'character') { $('out').src = `api/runs/${id}/final.mp4`; $('meta').textContent = `${id} · ${m.engine || ''}`; $('res').hidden = false; return $('res').scrollIntoView(); }
+  CH = m; $('candBox').hidden = false; $('desc').value = m.desc || '';
+  $('cands').innerHTML = (m.candidates || []).map(f => `<img src="api/runs/${id}/${f}">`).join('');
+  $('cands').querySelectorAll('img').forEach((im, i) => im.onclick = () => pick(i)); if (m.candidates) pick(m.picked || 0);
+  const v = m.move ? 'move.mp4' : m.talk ? 'talk.mp4' : ''; if (v) { $('sout').src = `api/runs/${id}/${v}`; $('sres').hidden = false; }
+  (v ? $('sres') : $('candBox')).scrollIntoView();
+})();
 $('toPersona').onclick = async () => {
   if (!CH) return; $('toPersona').disabled = true; $('pmsg').textContent = '추가 중 (캐릭터 설정을 쓰는 중)…';
   try {

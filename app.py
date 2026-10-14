@@ -12,6 +12,7 @@ import base64, datetime, json, os, re, secrets, shutil, subprocess, sys, urllib.
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from gpu_pick import env_for, label, pick, pool_env, release
+import portal_jobs  # 포털 작업 알림(🔔) — 포털 밖이면 아무 일도 안 함
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WS = os.environ.get("WORKSPACE") or os.path.join(ROOT, "_workspace")  # 포털이 AGENT_DATA/<도구> 로 모아 줌
@@ -413,6 +414,14 @@ def signed(html):
     return html
 
 
+def job_msg(e):
+    """알림에 실을 짧은 오류 문구 — 서버 폴더 경로는 지운다"""
+    msg = f"{type(e).__name__}: {e}"
+    for base in sorted({os.path.realpath(WS), WS, ROOT, os.path.realpath(ROOT)}, key=len, reverse=True):
+        msg = msg.replace(base + os.sep, "").replace(base, "")
+    return msg[:200]
+
+
 def user_ws(h):
     """포털이 넘긴 사용자별 작업 폴더. owner(서버 주인)·헤더 없음(단독 실행) = 예전 WORKSPACE 그대로"""
     u = (h.headers.get("X-Agent-User") or "owner").strip()
@@ -439,6 +448,12 @@ class H(BaseHTTPRequestHandler):
             return self._send(list_runs(user_ws(self)))
         if p == "/api/studio":  # 스튜디오 선택지 (스타일·구도)
             return self._send({"styles": {k: v[0] for k, v in STYLES.items()}, "shots": {k: v[0] for k, v in SHOTS.items()}})
+        m = re.fullmatch(rf"/api/runs/({RUN_RE})", p)  # 항목 하나의 기록 — 포털 알림(🔔) 링크 /?run=<ID> 로 열 때
+        if m:
+            try:
+                return self._send(json.load(open(os.path.join(run_path(m.group(1), user_ws(self)), "meta.json"), encoding="utf-8")))
+            except (OSError, ValueError):
+                return self._send({"error": "삭제됐거나 없는 항목입니다"}, code=404)
         m = re.fullmatch(rf"/api/runs/({RUN_RE})/(final\.mp4|talk\.mp4|move\.mp4|cand_\d\.png)", p)
         if m:
             f = os.path.join(user_ws(self), m.group(1), m.group(2))
@@ -459,6 +474,10 @@ class H(BaseHTTPRequestHandler):
         def emit(ev):
             self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()); self.wfile.flush()
         ws = user_ws(self)  # 작업 경로는 요청 시점에 정해 GPU 워커로 넘긴다
+        user, jid, noted = self.headers.get("X-Agent-User"), secrets.token_hex(6), False
+        title = {"/api/imagine": "캐릭터 그리기", "/api/speak": "말하는 영상", "/api/move": "동작 영상"}[self.path]
+        rid = req.get("run_id") if isinstance(req.get("run_id"), str) and re.fullmatch(RUN_RE, req.get("run_id")) else None
+        portal_jobs.notify(user, "running", id=jid, title=title, link=f"/?run={rid}" if rid else "/")
         try:
             if self.path == "/api/imagine":
                 r = imagine(req.get("desc") or "", req.get("style") or "real", req.get("shot") or "half", req.get("n") or 4, emit, ws)
@@ -466,8 +485,12 @@ class H(BaseHTTPRequestHandler):
                 r = speak(req.get("run_id"), req.get("idx", 0), req.get("text") or "", req.get("quality") or "best", emit, ws)
             else:
                 r = move(req.get("run_id"), req.get("idx", 0), req.get("action") or "", req.get("text") or "", req.get("quality") or "best", emit, ws)
+            portal_jobs.notify(user, "done", id=jid, title=title, link=f"/?run={r['run_id']}",
+                               message=f"후보 {len(r.get('candidates') or [])}장" if self.path == "/api/imagine" else r.get("model") or "5초 영상"); noted = True
             emit({"done": r})
         except Exception as e:
+            if not noted:  # 다 만든 뒤 브라우저가 끊긴 경우는 '완료' 그대로
+                portal_jobs.notify(user, "failed", id=jid, title=title, link=f"/?run={rid}" if rid else "/", message=job_msg(e))
             emit({"error": f"{type(e).__name__}: {e}"})
 
     def do_DELETE(self):
@@ -528,12 +551,18 @@ class H(BaseHTTPRequestHandler):
         def emit(ev):
             self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()); self.wfile.flush()
         photo = None
+        user, jid, noted = self.headers.get("X-Agent-User"), secrets.token_hex(6), False
+        portal_jobs.notify(user, "running", id=jid, title="내 얼굴 아바타", link="/")
         try:
             photo = save("photo_b64", "photo_name", (".jpg", ".jpeg", ".png"))
             if not photo:
                 raise ValueError("사진이 필요합니다")
-            emit({"done": generate(photo, req.get("text") or "", bool(req.get("consent")), emit, ws)})
+            r = generate(photo, req.get("text") or "", bool(req.get("consent")), emit, ws)
+            portal_jobs.notify(user, "done", id=jid, title="내 얼굴 아바타", link=f"/?run={r['run_id']}", message=f"립싱크 영상 · {r['engine']}"); noted = True
+            emit({"done": r})
         except Exception as e:
+            if not noted:
+                portal_jobs.notify(user, "failed", id=jid, title="내 얼굴 아바타", link="/", message=job_msg(e))
             emit({"error": f"{type(e).__name__}: {e}"})
         finally:
             if photo and os.path.exists(photo):

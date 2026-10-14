@@ -98,6 +98,38 @@ for shot in app.SHOTS:
     for area, *_ in app.MOVE_Q.values():
         w, h = app.vsize(shot, area); W, H = app.SHOTS[shot][2]
         assert w % 16 == 0 and h % 16 == 0 and w * h <= area and abs(w / h - W / H) < 0.03, (shot, w, h)
+# 포털 작업 알림(🔔): 환경변수 없으면 notify 는 False 이고 생성은 그대로 / 가짜 포털에 running → done|failed 가 토큰 헤더와 함께 간다
+import base64, portal_jobs
+from http.server import BaseHTTPRequestHandler
+for k in ("PORTAL_JOBS_URL", "PORTAL_JOBS_TOKEN", "PORTAL_JOBS_TOOL"): os.environ.pop(k, None)
+assert portal_jobs.notify("alice", "running", id="x") is False
+GOT = []
+class FakePortal(BaseHTTPRequestHandler):
+    def log_message(self, *a): pass
+    def do_POST(self):
+        GOT.append((self.headers.get("X-Portal-Jobs-Token"), json.loads(self.rfile.read(int(self.headers["Content-Length"])))))
+        self.send_response(200); self.send_header("Content-Length", "2"); self.end_headers(); self.wfile.write(b"{}")
+portal = ThreadingHTTPServer(("127.0.0.1", 0), FakePortal); threading.Thread(target=portal.serve_forever, daemon=True).start()
+srv = ThreadingHTTPServer(("127.0.0.1", 0), app.H); threading.Thread(target=srv.serve_forever, daemon=True).start()
+U = f"http://127.0.0.1:{srv.server_address[1]}"
+def sse(path, body, user="owner"):
+    _, b = req(path, user, body); return [json.loads(l[6:]) for l in b.decode().split("\n\n") if l.startswith("data: ")]
+pb = {"consent": True, "text": "알림", "photo_name": "p.png", "photo_b64": base64.b64encode(open(photo, "rb").read()).decode()}
+assert "done" in sse("/api/run", pb)[-1] and GOT == []  # 꺼져 있어도 도구는 그대로
+os.environ.update(PORTAL_JOBS_URL=f"http://127.0.0.1:{portal.server_address[1]}/api/internal/jobs", PORTAL_JOBS_TOKEN="tok-test", PORTAL_JOBS_TOOL="avatar-local")
+assert portal_jobs.notify("alice", "queued", id="j1", title="t", link="/?run=x", message="m", progress=-5) and portal_jobs.flush()
+assert GOT[-1] == ("tok-test", {"tool": "avatar-local", "user": "alice", "status": "queued", "title": "t", "link": "/?run=x", "message": "m", "id": "j1", "progress": 0}), GOT
+r1 = sse("/api/run", pb)[-1]["done"]; r2 = sse("/api/speak", {"run_id": cid, "idx": 0, "text": "안녕", "quality": "fast"})[-1]["done"]
+sse("/api/move", {"run_id": "2026-01-01-ffff", "action": "손 흔들기"}); portal_jobs.flush()
+st = [g[1] for g in GOT[1:]]
+assert [x["status"] for x in st] == ["running", "done"] * 2 + ["running", "failed"], st
+assert st[0]["id"] == st[1]["id"] != st[2]["id"] and st[1]["link"] == f"/?run={r1['run_id']}" and st[1]["title"] == "내 얼굴 아바타" and st[1]["user"] == "owner"
+assert st[2]["link"] == st[3]["link"] == f"/?run={cid}" and st[3]["title"] == "말하는 영상" and st[3]["message"] == "SadTalker"
+assert st[5]["title"] == "동작 영상" and app.WS not in st[5]["message"] and all(g[0] == "tok-test" for g in GOT)
+# 알림 링크 /?run=<ID> 가 여는 기록: 내 것만
+assert json.loads(req(f"/api/runs/{cid}", "owner")[1])["kind"] == "character" and req(f"/api/runs/{cid}", "bob")[0] == 404
+srv.shutdown(); portal.shutdown()
+for k in ("PORTAL_JOBS_URL", "PORTAL_JOBS_TOKEN", "PORTAL_JOBS_TOOL"): os.environ.pop(k, None)
 shutil.rmtree(d); print("selftest OK")
 # 저작권 표기: 서버가 화면에 붙이는 코드가 있어야 한다 (LICENSE·NOTICE)
 _src = open(__import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "app.py"), encoding="utf-8").read()
