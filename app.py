@@ -579,4 +579,4 @@ if __name__ == "__main__":
         shutil.copy(os.path.join(WS, m["run_id"], "final.mp4"), out); print(out)
         sys.exit(0)
     print(f"avatar-local → http://localhost:{PORT}  {status()}  {_SIG}")
-    ThreadingHTTPServer((os.environ.get("BIND", ""), PORT), H).serve_forever()
+    ThreadingHTTPServer((os.environ.get("BIND", "127.0.0.1"), PORT), __import__("portal_auth").install(H, "avatar-local")).serve_forever()
