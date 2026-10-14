@@ -11,7 +11,7 @@ env: PORT(8777) DEVICE(cpu|cuda, 기본 cpu — SadTalker 는 mps 미지원)
 import base64, datetime, json, os, re, secrets, shutil, subprocess, sys, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from gpu_pick import env_for, label, pick, release
+from gpu_pick import env_for, label, pick, pool_env, release
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 WS = os.environ.get("WORKSPACE") or os.path.join(ROOT, "_workspace")  # 포털이 AGENT_DATA/<도구> 로 모아 줌
@@ -147,13 +147,18 @@ def llm_json(system, user):
     return json.loads(m.group(0))
 
 
+def worker_env(env=None, smi_ids=None):
+    """작업자 프로세스 환경 — CUDA_VISIBLE_DEVICES 를 부모 후보(CUDA_VISIBLE_DEVICES ∩ GPU_POOL − GPU_RESERVED)로 좁힘(운영 vLLM GPU 는 안 보임)"""
+    return pool_env({**(os.environ if env is None else env), "PYTHONUNBUFFERED": "1"}, smi_ids)
+
+
 def worker(path, body, emit=lambda ev: None):
     """스튜디오 작업 프로세스에 요청(없으면 띄움) → 마지막 결과. 진행률은 emit 으로."""
     try:
         urllib.request.urlopen(STUDIO_URL + "/", timeout=2)
     except Exception:
         emit({"stage": "worker", "msg": "그림·영상 작업 프로세스 시작"})
-        wp = subprocess.Popen([PY, os.path.join(ROOT, "studio_worker.py")], cwd=ROOT, env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        wp = subprocess.Popen([PY, os.path.join(ROOT, "studio_worker.py")], cwd=ROOT, env=worker_env(),
                               stdout=open(os.path.join(ROOT, "studio.log"), "ab"), stderr=subprocess.STDOUT, start_new_session=True)
         open(os.path.join(ROOT, ".studio.pid"), "w").write(str(wp.pid))  # setup.sh stop 이 같이 끈다(GPU 메모리 반환)
         for _ in range(180):
