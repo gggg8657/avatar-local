@@ -129,6 +129,34 @@ assert st[2]["link"] == st[3]["link"] == f"/?run={cid}" and st[3]["title"] == "�
 assert st[5]["title"] == "동작 영상" and app.WS not in st[5]["message"] and all(g[0] == "tok-test" for g in GOT)
 # 알림 링크 /?run=<ID> 가 여는 기록: 내 것만
 assert json.loads(req(f"/api/runs/{cid}", "owner")[1])["kind"] == "character" and req(f"/api/runs/{cid}", "bob")[0] == 404
+# 브라우저가 떠나도(첫 진행 이벤트 뒤 쓰기가 BrokenPipeError) 영상 만들기는 끝까지 — 실행 목록에 남고 🔔 done, 서버 오류·트레이스백 없음
+import io, sys
+class Cut:
+    def __init__(s, f, n): s.f, s.n = f, n
+    def write(s, b):
+        s.n -= 1
+        if s.n < 0: raise BrokenPipeError(32, "Broken pipe")
+        return s.f.write(b)
+    def flush(s): pass
+    def __getattr__(s, k): return getattr(s.f, k)
+class CutH(app.H):
+    def setup(s): super().setup(); s.wfile = Cut(s.wfile, 2)  # 응답 머리 + 첫 이벤트까지만 닿음
+ERRS = []
+class Srv(ThreadingHTTPServer):
+    def handle_error(s, req, addr): ERRS.append(sys.exc_info()[1])
+cut = Srv(("127.0.0.1", 0), CutH); threading.Thread(target=cut.serve_forever, daemon=True).start()
+del GOT[:]
+before, err0 = {x["run_id"] for x in app.list_runs()}, sys.stderr; sys.stderr = cap = io.StringIO()
+try:
+    r = urllib.request.Request(f"http://127.0.0.1:{cut.server_address[1]}/api/run", json.dumps({**pb, "text": "떠난 뒤"}).encode(), {"X-Agent-User": "owner"})
+    got = urllib.request.urlopen(r).read().decode()
+finally:
+    sys.stderr = err0
+portal_jobs.flush(); cut.shutdown()
+new = [x for x in app.list_runs() if x["run_id"] not in before]
+assert got.count("data: ") == 1 and len(new) == 1 and os.path.exists(os.path.join(app.WS, new[0]["run_id"], "final.mp4")), (got, new)
+assert [g[1]["status"] for g in GOT] == ["running", "done"] and GOT[-1][1]["link"] == f"/?run={new[0]['run_id']}", GOT
+assert not ERRS and "Traceback" not in cap.getvalue() and cap.getvalue().count("연결 끊김") == 1, (ERRS, cap.getvalue())
 srv.shutdown(); portal.shutdown()
 for k in ("PORTAL_JOBS_URL", "PORTAL_JOBS_TOKEN", "PORTAL_JOBS_TOOL"): os.environ.pop(k, None)
 shutil.rmtree(d); print("selftest OK")

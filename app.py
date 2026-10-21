@@ -433,6 +433,21 @@ def user_ws(h):
     return d
 
 
+def safe_emit(wfile):
+    """SSE 한 줄 쓰기. 브라우저가 떠나 연결이 끊기면(포털도 도구 쪽 연결을 닫음) 그 뒤 쓰기는 조용히 버린다 —
+    끊김은 취소가 아니라서 작업은 끝까지 하고 결과는 실행 목록에 남고 🔔 알림은 완료로 간다"""
+    gone = []
+
+    def emit(ev):
+        if gone: return
+        b = f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()
+        try:
+            wfile.write(b); wfile.flush()
+        except OSError:  # BrokenPipe·ConnectionReset·ConnectionAborted·닫힌 소켓
+            gone.append(1); print("클라이언트 연결 끊김 — 작업은 계속", file=sys.stderr, flush=True)
+    return emit
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -473,9 +488,7 @@ class H(BaseHTTPRequestHandler):
             except Exception as e:
                 return self._send({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")}, code=400)
         self.send_response(200); self.send_header("Content-Type", "text/event-stream; charset=utf-8"); self.send_header("Cache-Control", "no-cache"); self.end_headers()
-
-        def emit(ev):
-            self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()); self.wfile.flush()
+        emit = safe_emit(self.wfile)
         ws = user_ws(self)  # 작업 경로는 요청 시점에 정해 GPU 워커로 넘긴다
         user, jid, noted = self.headers.get("X-Agent-User"), secrets.token_hex(6), False
         title = {"/api/imagine": "캐릭터 그리기", "/api/speak": "말하는 영상", "/api/move": "동작 영상"}[self.path]
@@ -492,7 +505,7 @@ class H(BaseHTTPRequestHandler):
                                message=f"후보 {len(r.get('candidates') or [])}장" if self.path == "/api/imagine" else r.get("model") or "5초 영상"); noted = True
             emit({"done": r})
         except Exception as e:
-            if not noted:  # 다 만든 뒤 브라우저가 끊긴 경우는 '완료' 그대로
+            if not noted:
                 portal_jobs.notify(user, "failed", id=jid, title=title, link=f"/?run={rid}" if rid else "/", message=job_msg(e))
             emit({"error": portal_auth.scrub(f"{type(e).__name__}: {e}")})
 
@@ -550,9 +563,7 @@ class H(BaseHTTPRequestHandler):
                 f.write(base64.b64decode(req[key]))
             return p
         self.send_response(200); self.send_header("Content-Type", "text/event-stream; charset=utf-8"); self.send_header("Cache-Control", "no-cache"); self.end_headers()
-
-        def emit(ev):
-            self.wfile.write(f"data: {json.dumps(ev, ensure_ascii=False)}\n\n".encode()); self.wfile.flush()
+        emit = safe_emit(self.wfile)
         photo = None
         user, jid, noted = self.headers.get("X-Agent-User"), secrets.token_hex(6), False
         portal_jobs.notify(user, "running", id=jid, title="내 얼굴 아바타", link="/")
